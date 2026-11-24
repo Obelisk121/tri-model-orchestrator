@@ -275,6 +275,17 @@ public final class TriModelPluginTestSuite {
         assertTrue(CliModelClient.resolveExecutable("python3") != null, "resolveExecutable finds python3");
         assertTrue(CliModelClient.resolveExecutable("nonexistent_binary_xyz_999") == null, "resolveExecutable returns null for missing binary");
 
+        // Verify Codex CLI auto-adds --skip-git-repo-check & --color never for legacy configs
+        List<String> codexArgs = CliModelClient.normalizeArgsForProvider(ModelProviderType.CHATGPT, List.of("exec", "-"));
+        assertTrue(codexArgs.contains("--skip-git-repo-check"), "Codex exec auto-injects --skip-git-repo-check");
+        assertTrue(codexArgs.contains("--color") && codexArgs.contains("never"), "Codex exec auto-injects --color never");
+
+        // Verify Gemini settings.json OAuth mode switcher preserves existing keys
+        String patchedGemini = CliModelClient.patchGeminiSettingsForOAuth(
+                "{\"general\":{\"enabled\":true},\"security\":{\"auth\":{\"selectedType\":\"gemini-api-key\"}}}");
+        assertTrue(patchedGemini.contains("\"oauth-personal\""), "Gemini settings patched to oauth-personal");
+        assertTrue(patchedGemini.contains("\"general\""), "Existing Gemini settings preserved");
+
         CliModelClient stdinCli = new CliModelClient(
                 ModelProviderType.CLAUDE,
                 "/usr/bin/python3",

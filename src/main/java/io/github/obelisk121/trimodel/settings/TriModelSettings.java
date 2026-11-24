@@ -87,6 +87,10 @@ public final class TriModelSettings implements PersistentStateComponent<TriModel
         if (s.claude == null) s.claude = ProviderConfig.defaultsFor(ModelProviderType.CLAUDE);
         if (s.chatgpt == null) s.chatgpt = ProviderConfig.defaultsFor(ModelProviderType.CHATGPT);
         if (s.gemini == null) s.gemini = ProviderConfig.defaultsFor(ModelProviderType.GEMINI);
+        // Auto-migrate legacy Codex CLI args that failed outside git directories
+        if ("exec -".equals(s.chatgpt.cliArgs != null ? s.chatgpt.cliArgs.trim() : "")) {
+            s.chatgpt.cliArgs = ModelProviderType.CHATGPT.getDefaultCliArgs();
+        }
         if (s.defaultMode == null) s.defaultMode = OrchestrationMode.PIPELINE;
         if (s.architectRole == null) s.architectRole = ModelProviderType.GEMINI;
         if (s.coderRole == null) s.coderRole = ModelProviderType.CLAUDE;

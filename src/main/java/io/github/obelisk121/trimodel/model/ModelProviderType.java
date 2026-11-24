@@ -46,7 +46,7 @@ public enum ModelProviderType {
             "https://platform.openai.com/api-keys",
             "https://platform.openai.com/",
             "codex",
-            "exec -",
+            "exec --skip-git-repo-check --ephemeral --color never -s read-only -",
             "login",
             "logout",
             "npm install -g @openai/codex",

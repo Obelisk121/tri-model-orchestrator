@@ -1,5 +1,9 @@
 package io.github.obelisk121.trimodel.provider;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.intellij.ide.BrowserUtil;
 import io.github.obelisk121.trimodel.model.ChatMessage;
 import io.github.obelisk121.trimodel.model.ModelProviderType;
@@ -77,8 +81,9 @@ public final class CliModelClient implements ModelClient {
         List<String> command = new ArrayList<>();
         command.add(resolvedExe);
 
+        List<String> parsedArgs = normalizeArgsForProvider(providerType, tokenizeArgs(argsTemplate));
         boolean promptInjectedViaArg = false;
-        for (String token : tokenizeArgs(argsTemplate)) {
+        for (String token : parsedArgs) {
             if (token.contains("{prompt}")) {
                 command.add(token.replace("{prompt}", combinedPrompt));
                 promptInjectedViaArg = true;
@@ -88,6 +93,10 @@ public final class CliModelClient implements ModelClient {
         }
 
         ProcessBuilder pb = new ProcessBuilder(command);
+        String userHome = System.getProperty("user.home", "");
+        if (!userHome.isBlank() && new File(userHome).isDirectory()) {
+            pb.directory(new File(userHome));
+        }
         enrichPathForGuiApps(pb.environment());
 
         Process process;
@@ -212,12 +221,22 @@ public final class CliModelClient implements ModelClient {
             return "CLI '" + binName + "' is not installed. Run: " + type.getCliInstallHint();
         }
 
+        // Gemini CLI rejects browser sign-in with exit code 41 if ~/.gemini/settings.json is pinned to gemini-api-key.
+        // Switch it to Google's documented 'oauth-personal' browser login mode before launching.
+        if (type == ModelProviderType.GEMINI) {
+            ensureGeminiCliOAuthMode();
+        }
+
         List<String> cmd = new ArrayList<>();
         cmd.add(resolved);
         cmd.addAll(tokenizeArgs(type.getDefaultCliLoginArgs()));
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.redirectErrorStream(true);
+        String userHome = System.getProperty("user.home", "");
+        if (!userHome.isBlank() && new File(userHome).isDirectory()) {
+            pb.directory(new File(userHome));
+        }
         enrichPathForGuiApps(pb.environment());
         try {
             status.accept("Starting browser sign-in for " + type.getShortName() + "...");
@@ -338,6 +357,64 @@ public final class CliModelClient implements ModelClient {
         }
         sb.append("[TASK]\n").append(request.userPrompt());
         return sb.toString();
+    }
+
+    /**
+     * Ensures Codex CLI invocations include --skip-git-repo-check so they work from any PyCharm directory.
+     */
+    public static List<String> normalizeArgsForProvider(ModelProviderType provider, List<String> args) {
+        List<String> out = new ArrayList<>(args);
+        if (provider == ModelProviderType.CHATGPT && !out.isEmpty() && "exec".equals(out.get(0))) {
+            if (!out.contains("--skip-git-repo-check")) {
+                out.add(1, "--skip-git-repo-check");
+            }
+            if (!out.contains("--color")) {
+                out.add(1, "never");
+                out.add(1, "--color");
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Updates Gemini CLI's ~/.gemini/settings.json auth selectedType to 'oauth-personal'
+     * so 'Sign In in Browser' launches Google OAuth instead of demanding GEMINI_API_KEY.
+     */
+    static void ensureGeminiCliOAuthMode() {
+        String home = System.getProperty("user.home", "");
+        if (home.isBlank()) return;
+        Path settingsPath = Path.of(home, ".gemini", "settings.json");
+        try {
+            String existing = Files.isRegularFile(settingsPath)
+                    ? Files.readString(settingsPath, StandardCharsets.UTF_8)
+                    : "{}";
+            String updated = patchGeminiSettingsForOAuth(existing);
+            Files.createDirectories(settingsPath.getParent());
+            Files.writeString(settingsPath, updated, StandardCharsets.UTF_8);
+        } catch (IOException ignored) {
+        }
+    }
+
+    public static String patchGeminiSettingsForOAuth(String jsonText) {
+        JsonObject root;
+        try {
+            root = (jsonText == null || jsonText.isBlank())
+                    ? new JsonObject()
+                    : JsonParser.parseString(jsonText).getAsJsonObject();
+        } catch (Exception e) {
+            root = new JsonObject();
+        }
+        JsonObject security = (root.has("security") && root.get("security").isJsonObject())
+                ? root.getAsJsonObject("security")
+                : new JsonObject();
+        JsonObject auth = (security.has("auth") && security.get("auth").isJsonObject())
+                ? security.getAsJsonObject("auth")
+                : new JsonObject();
+        auth.addProperty("selectedType", "oauth-personal");
+        security.add("auth", auth);
+        root.add("security", security);
+        Gson pretty = new GsonBuilder().setPrettyPrinting().create();
+        return pretty.toJson(root) + "\n";
     }
 
     static List<String> tokenizeArgs(String args) {

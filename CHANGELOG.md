@@ -4,6 +4,13 @@ All notable changes to **Tri-Model AI Orchestrator** are documented in this file
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-11-24
+
+### Fixed
+- **ChatGPT (`codex`) CLI outside Git directories:** Updated default args to `exec --skip-git-repo-check --ephemeral --color never -s read-only -` and added automatic migration/runtime injection so existing configurations work immediately after authorization without `Not inside a trusted directory` errors.
+- **Google Gemini CLI Browser Sign-In:** Automatically switches Gemini CLI's `~/.gemini/settings.json` `security.auth.selectedType` to `oauth-personal` when the user clicks **Sign In in Browser**, preventing exit code 41 (`When using Gemini API, you must specify the GEMINI_API_KEY environment variable`).
+- **Quick Sign-In Dialog Polish:** Widened dialog (`740x440`) and shortened button/dropdown labels so nothing clips in compact or dark themes.
+
 ## [1.2.0] - 2026-11-24
 
 ### Improved

@@ -49,8 +49,8 @@ import java.util.Map;
  */
 public final class QuickSetupDialog extends DialogWrapper {
 
-    private static final String MODE_BROWSER = "Browser Sign-In (No API Key)";
-    private static final String MODE_API_KEY = "API Key (Paste & Go)";
+    private static final String MODE_BROWSER = "Browser Sign-In";
+    private static final String MODE_API_KEY = "API Key";
 
     private final Project project;
     private final Map<ModelProviderType, ProviderRow> rows = new EnumMap<>(ModelProviderType.class);
@@ -66,7 +66,7 @@ public final class QuickSetupDialog extends DialogWrapper {
     @Override
     protected @Nullable JComponent createCenterPanel() {
         JPanel root = new JPanel(new BorderLayout(0, 10));
-        root.setPreferredSize(new Dimension(650, 410));
+        root.setPreferredSize(new Dimension(740, 440));
 
         JPanel top = new JPanel(new BorderLayout(0, 6));
         JBLabel intro = new JBLabel(
@@ -76,7 +76,7 @@ public final class QuickSetupDialog extends DialogWrapper {
         top.add(intro, BorderLayout.CENTER);
 
         JPanel quickBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        JButton useBrowserAllBtn = new JButton("Use Browser Sign-In for All Installed CLIs");
+        JButton useBrowserAllBtn = new JButton("Use Browser Sign-In for All");
         useBrowserAllBtn.addActionListener(e -> {
             for (ProviderRow row : rows.values()) {
                 if (CliModelClient.isCliInstalled(row.type, row.existingConfig.effectiveCliExecutable(row.type))) {
@@ -85,7 +85,7 @@ public final class QuickSetupDialog extends DialogWrapper {
                 }
             }
         });
-        JButton advancedBtn = new JButton("Advanced Settings (Custom URL / Custom OAuth)...");
+        JButton advancedBtn = new JButton("Advanced Settings...");
         advancedBtn.addActionListener(e -> {
             saveChoices();
             close(OK_EXIT_CODE);

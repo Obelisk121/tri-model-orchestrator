@@ -20,7 +20,7 @@ Orchestrate **Claude**, **ChatGPT**, and **Gemini** together inside **PyCharm** 
 2. Open **PyCharm**.
 3. Go to **Settings / Preferences** (`Cmd + ,` on macOS, `Ctrl + Alt + S` on Windows/Linux) → **Plugins**.
 4. Click the **gear icon (⚙)** at the top right of the Plugins pane and select **Install Plugin from Disk...**.
-5. Select the downloaded `tri-model-orchestrator-1.2.0.zip` file and click **OK**.
+5. Select the downloaded `tri-model-orchestrator-1.2.1.zip` file and click **OK**.
 6. Restart PyCharm when prompted.
 7. Open the **Tri-Model AI** tool window on the right sidebar (or right-click inside any editor → **Tri-Model AI**).
 
@@ -41,13 +41,13 @@ cd tri-model-orchestrator
 ```bash
 ./scripts/build-plugin.sh
 ```
-This compiles against your installed `/Applications/PyCharm.app` (set `PYCHARM_APP=/path/to/PyCharm.app` if installed elsewhere), runs the full 14-test suite, runs JetBrains Marketplace compliance checks, and generates `build/distributions/tri-model-orchestrator-1.2.0.zip`.
+This compiles against your installed `/Applications/PyCharm.app` (set `PYCHARM_APP=/path/to/PyCharm.app` if installed elsewhere), runs the full 14-test suite, runs JetBrains Marketplace compliance checks, and generates `build/distributions/tri-model-orchestrator-1.2.1.zip`.
 
 **Standard Gradle build (cross-platform, IntelliJ Platform Gradle Plugin 2.x):**
 ```bash
 gradle buildPlugin verifyPlugin
 ```
-Then install `build/distributions/tri-model-orchestrator-1.2.0.zip` via **Settings → Plugins → ⚙ → Install Plugin from Disk...**.
+Then install `build/distributions/tri-model-orchestrator-1.2.1.zip` via **Settings → Plugins → ⚙ → Install Plugin from Disk...**.
 
 ### Option 4: Private / Enterprise Custom Plugin Repository
 
@@ -56,8 +56,8 @@ Organizations hosting an internal JetBrains plugin repository can serve the rele
 ```xml
 <plugins>
   <plugin id="io.github.obelisk121.trimodel"
-          url="https://internal.example.com/plugins/tri-model-orchestrator-1.2.0.zip"
-          version="1.2.0">
+          url="https://internal.example.com/plugins/tri-model-orchestrator-1.2.1.zip"
+          version="1.2.1">
     <idea-version since-build="242"/>
     <name>Tri-Model AI Orchestrator</name>
   </plugin>
