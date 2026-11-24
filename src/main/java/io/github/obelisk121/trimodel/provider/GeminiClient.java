@@ -28,10 +28,11 @@ public final class GeminiClient implements ModelClient {
     private final String apiKey;
     private final String modelId;
     private final GeminiApiStyle apiStyle;
+    private final boolean useBearerAuth;
     private final HttpTransport.PostFunction transport;
 
     public GeminiClient(String baseUrl, String apiKey, String modelId, GeminiApiStyle apiStyle) {
-        this(baseUrl, apiKey, modelId, apiStyle, HttpTransport::postJson);
+        this(baseUrl, apiKey, modelId, apiStyle, false, HttpTransport::postJson);
     }
 
     public GeminiClient(
@@ -41,12 +42,24 @@ public final class GeminiClient implements ModelClient {
             GeminiApiStyle apiStyle,
             HttpTransport.PostFunction transport
     ) {
+        this(baseUrl, apiKey, modelId, apiStyle, false, transport);
+    }
+
+    public GeminiClient(
+            String baseUrl,
+            String apiKey,
+            String modelId,
+            GeminiApiStyle apiStyle,
+            boolean useBearerAuth,
+            HttpTransport.PostFunction transport
+    ) {
         this.baseUrl = trimTrailingSlashes(baseUrl == null || baseUrl.isBlank()
                 ? ModelProviderType.GEMINI.getDefaultBaseUrl() : baseUrl);
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.modelId = (modelId == null || modelId.isBlank())
                 ? ModelProviderType.GEMINI.getDefaultModel() : modelId.trim();
         this.apiStyle = apiStyle == null ? GeminiApiStyle.INTERACTIONS : apiStyle;
+        this.useBearerAuth = useBearerAuth;
         this.transport = transport == null ? HttpTransport::postJson : transport;
     }
 
@@ -63,12 +76,18 @@ public final class GeminiClient implements ModelClient {
     @Override
     public ModelResponse generate(ModelRequest request, BooleanSupplier isCancelled) {
         if (apiKey.isBlank()) {
-            return ModelResponse.error(ModelProviderType.GEMINI, modelId,
-                    "Gemini API key is not configured. Add it in Settings -> Tools -> Tri-Model AI Orchestrator or set GEMINI_API_KEY.", 0);
+            String msg = useBearerAuth
+                    ? "Gemini browser OAuth session is not active or has expired. Click 'Authorize in Browser' in Settings or the Tool Window."
+                    : "Gemini API key is not configured. Add it in Settings -> Tools -> Tri-Model AI Orchestrator or set GEMINI_API_KEY.";
+            return ModelResponse.error(ModelProviderType.GEMINI, modelId, msg, 0);
         }
 
         Map<String, String> headers = new LinkedHashMap<>();
-        headers.put("x-goog-api-key", apiKey);
+        if (useBearerAuth) {
+            headers.put("Authorization", "Bearer " + apiKey);
+        } else {
+            headers.put("x-goog-api-key", apiKey);
+        }
 
         String endpoint = apiStyle == GeminiApiStyle.INTERACTIONS
                 ? buildInteractionsEndpoint(baseUrl)

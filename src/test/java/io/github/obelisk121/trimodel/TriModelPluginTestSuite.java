@@ -2,7 +2,11 @@ package io.github.obelisk121.trimodel;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import io.github.obelisk121.trimodel.auth.OAuthPkceService;
+import io.github.obelisk121.trimodel.auth.OAuthSessionStore;
+import io.github.obelisk121.trimodel.auth.OAuthToken;
 import io.github.obelisk121.trimodel.model.ChatMessage;
+import io.github.obelisk121.trimodel.model.ConnectionMode;
 import io.github.obelisk121.trimodel.model.ContextAttachment;
 import io.github.obelisk121.trimodel.model.GeminiApiStyle;
 import io.github.obelisk121.trimodel.model.ModelProviderType;
@@ -22,6 +26,7 @@ import io.github.obelisk121.trimodel.provider.CliModelClient;
 import io.github.obelisk121.trimodel.provider.GeminiClient;
 import io.github.obelisk121.trimodel.provider.HttpTransport;
 import io.github.obelisk121.trimodel.provider.ModelClient;
+import io.github.obelisk121.trimodel.settings.ProviderConfig;
 import io.github.obelisk121.trimodel.ui.MarkdownHtmlRenderer;
 
 import java.util.EnumMap;
@@ -55,6 +60,8 @@ public final class TriModelPluginTestSuite {
         runTest("OrchestrationEngine: SIDE_BY_SIDE mode & partial provider fallback", TriModelPluginTestSuite::testSideBySideAndFallback);
         runTest("OrchestrationEngine: Cooperative cancellation", TriModelPluginTestSuite::testCancellation);
         runTest("MarkdownHtmlRenderer (tables, code blocks, badges, HTML escaping)", TriModelPluginTestSuite::testMarkdownRenderer);
+        runTest("OAuth 2.0 PKCE (S256, auth URL, CSRF state, code exchange, temporary session & refresh)", TriModelPluginTestSuite::testOAuthPkceFlow);
+        runTest("Bearer OAuth headers on ClaudeClient & GeminiClient", TriModelPluginTestSuite::testOAuthBearerHeaders);
 
         System.out.println();
         System.out.printf("Results: %d passed, %d failed%n", passed, failed);
@@ -497,6 +504,106 @@ public final class TriModelPluginTestSuite {
         assertTrue(html.contains("&lt;script&gt;"), "Escaped script visible as text");
         assertTrue(html.contains("<table>") && html.contains("<th>Model</th>"), "Markdown table rendered");
         assertTrue(html.contains("<pre>x = 1 &lt; 2 and 3 &gt; 1"), "Code block escaped and rendered");
+    }
+
+    private static void testOAuthPkceFlow() {
+        OAuthSessionStore.clearAllSessions();
+
+        // 1. PKCE S256 deterministic RFC 7636 test vector
+        String rfcVerifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        String expectedChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+        assertEquals(expectedChallenge, OAuthPkceService.deriveCodeChallengeS256(rfcVerifier), "RFC 7636 S256 challenge");
+
+        // 2. Endpoint HTTPS enforcement
+        assertTrue(OAuthPkceService.validateEndpointUrl("http://evil.example.com/auth", "URL") != null, "Non-HTTPS remote URL rejected");
+        assertTrue(OAuthPkceService.validateEndpointUrl("https://accounts.google.com/o/oauth2/v2/auth", "URL") == null, "HTTPS URL accepted");
+        assertTrue(OAuthPkceService.validateEndpointUrl("http://127.0.0.1:8080/token", "URL") == null, "Loopback HTTP accepted for local dev");
+
+        // 3. Authorization URL parameters
+        ProviderConfig cfg = ProviderConfig.defaultsFor(ModelProviderType.GEMINI);
+        cfg.connectionMode = ConnectionMode.OAUTH_BROWSER;
+        cfg.oauthClientId = "test-desktop-client.apps.googleusercontent.com";
+        cfg.oauthTemporaryOnly = true;
+
+        String authUrl = OAuthPkceService.buildAuthorizationUrl(
+                ModelProviderType.GEMINI, cfg, "http://127.0.0.1:54321/callback", "state123", expectedChallenge);
+        assertTrue(authUrl.startsWith("https://accounts.google.com/o/oauth2/v2/auth?"), "Google authorize base URL");
+        assertTrue(authUrl.contains("code_challenge=" + expectedChallenge), "PKCE challenge included");
+        assertTrue(authUrl.contains("code_challenge_method=S256"), "PKCE S256 method included");
+        assertTrue(authUrl.contains("state=state123"), "CSRF state included");
+        assertTrue(authUrl.contains("access_type=online"), "Temporary mode requests online access");
+
+        // 4. Loopback callback query validation (CSRF protection & error handling)
+        OAuthPkceService.CallbackOutcome badState = OAuthPkceService.processCallbackQuery("code=abc&state=wrong", "state123");
+        assertTrue(!badState.success() && badState.errorMessage().contains("CSRF"), "CSRF mismatch rejected");
+
+        OAuthPkceService.CallbackOutcome denied = OAuthPkceService.processCallbackQuery("error=access_denied&error_description=User+cancelled", "state123");
+        assertTrue(!denied.success() && denied.errorMessage().contains("access_denied"), "Provider error captured");
+
+        OAuthPkceService.CallbackOutcome good = OAuthPkceService.processCallbackQuery("code=auth_code_99&state=state123", "state123");
+        assertTrue(good.success() && "auth_code_99".equals(good.code()), "Valid callback code extracted");
+
+        // 5. Temporary RAM-only code exchange strips long-lived refresh token
+        AtomicReference<Map<String, String>> capturedForm = new AtomicReference<>();
+        OAuthPkceService pkceService = new OAuthPkceService((url, params, timeout, cancel) -> {
+            capturedForm.set(params);
+            String json = "{\"access_token\":\"ya29.temp_token\",\"refresh_token\":\"1//ignored_in_temp\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"scope\":\"generative-language\"}";
+            return new HttpTransport.HttpResult(200, json, 15, false, null);
+        });
+
+        OAuthPkceService.AuthResult exchanged = pkceService.exchangeAuthorizationCode(
+                ModelProviderType.GEMINI, cfg, "", "auth_code_99", rfcVerifier, "http://127.0.0.1:54321/callback", () -> false);
+        assertTrue(exchanged.success(), "OAuth code exchange succeeded: " + exchanged.errorMessage());
+        assertEquals("ya29.temp_token", exchanged.token().accessToken(), "Access token captured");
+        assertTrue(exchanged.token().temporaryOnly(), "Token marked temporary RAM-only");
+        assertTrue(!exchanged.token().canRefresh(), "Temporary-only mode does not retain long-lived refresh token");
+        assertEquals(rfcVerifier, capturedForm.get().get("code_verifier"), "PKCE verifier sent to token endpoint");
+        assertTrue(OAuthSessionStore.hasUsableSession(ModelProviderType.GEMINI), "Session active in store");
+
+        // 6. Persistent session + refresh token flow
+        cfg.oauthTemporaryOnly = false;
+        OAuthPkceService.AuthResult persisted = pkceService.exchangeAuthorizationCode(
+                ModelProviderType.GEMINI, cfg, "desktop-secret", "auth_code_99", rfcVerifier, "http://127.0.0.1:54321/callback", () -> false);
+        assertTrue(persisted.success() && persisted.token().canRefresh(), "Persistent mode keeps refresh token");
+        assertEquals("desktop-secret", capturedForm.get().get("client_secret"), "Optional client_secret sent when provided");
+
+        OAuthPkceService.AuthResult refreshed = pkceService.refreshAccessToken(
+                ModelProviderType.GEMINI, cfg, "desktop-secret", persisted.token(), () -> false);
+        assertTrue(refreshed.success(), "Token refresh succeeded");
+        assertEquals("refresh_token", capturedForm.get().get("grant_type"), "Refresh grant_type used");
+
+        // 7. Sign out clears session completely
+        OAuthSessionStore.clearSession(ModelProviderType.GEMINI);
+        assertTrue(!OAuthSessionStore.hasUsableSession(ModelProviderType.GEMINI), "Sign out clears session");
+    }
+
+    private static void testOAuthBearerHeaders() {
+        AtomicReference<Map<String, String>> claudeHeaders = new AtomicReference<>();
+        ClaudeClient claudeBearer = new ClaudeClient(
+                "https://api.anthropic.com", "oauth-claude-tok", "claude-sonnet-5-5", "2026-10-21", true,
+                (url, headers, body, timeout, cancel) -> {
+                    claudeHeaders.set(headers);
+                    return new HttpTransport.HttpResult(200,
+                            "{\"model\":\"claude-sonnet-5-5\",\"content\":[{\"type\":\"text\",\"text\":\"OK\"}]}", 10, false, null);
+                });
+        ModelResponse cRes = claudeBearer.generate(ModelRequest.simple("", "ping"), () -> false);
+        assertTrue(cRes.success(), "Claude Bearer OAuth call succeeded");
+        assertEquals("Bearer oauth-claude-tok", claudeHeaders.get().get("Authorization"), "Claude Bearer header set");
+        assertTrue(!claudeHeaders.get().containsKey("x-api-key"), "Claude x-api-key omitted in Bearer mode");
+
+        AtomicReference<Map<String, String>> geminiHeaders = new AtomicReference<>();
+        GeminiClient geminiBearer = new GeminiClient(
+                "https://generativelanguage.googleapis.com/v1beta", "ya29.oauth-gem", "gemini-4-neon",
+                GeminiApiStyle.INTERACTIONS, true,
+                (url, headers, body, timeout, cancel) -> {
+                    geminiHeaders.set(headers);
+                    return new HttpTransport.HttpResult(200,
+                            "{\"steps\":[{\"type\":\"model_output\",\"content\":[{\"type\":\"text\",\"text\":\"OK\"}]}]}", 10, false, null);
+                });
+        ModelResponse gRes = geminiBearer.generate(ModelRequest.simple("", "ping"), () -> false);
+        assertTrue(gRes.success(), "Gemini Bearer OAuth call succeeded");
+        assertEquals("Bearer ya29.oauth-gem", geminiHeaders.get().get("Authorization"), "Gemini Bearer header set");
+        assertTrue(!geminiHeaders.get().containsKey("x-goog-api-key"), "Gemini x-goog-api-key omitted in Bearer mode");
     }
 
     private static ModelClient stub(ModelProviderType type, java.util.function.Function<ModelRequest, String> fn) {

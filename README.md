@@ -20,7 +20,7 @@ Orchestrate **Claude**, **ChatGPT**, and **Gemini** together inside **PyCharm** 
 2. Open **PyCharm**.
 3. Go to **Settings / Preferences** (`Cmd + ,` on macOS, `Ctrl + Alt + S` on Windows/Linux) → **Plugins**.
 4. Click the **gear icon (⚙)** at the top right of the Plugins pane and select **Install Plugin from Disk...**.
-5. Select the downloaded `tri-model-orchestrator-1.0.0.zip` file and click **OK**.
+5. Select the downloaded `tri-model-orchestrator-1.1.0.zip` file and click **OK**.
 6. Restart PyCharm when prompted.
 7. Open the **Tri-Model AI** tool window on the right sidebar (or right-click inside any editor → **Tri-Model AI**).
 
@@ -41,13 +41,13 @@ cd tri-model-orchestrator
 ```bash
 ./scripts/build-plugin.sh
 ```
-This compiles against your installed `/Applications/PyCharm.app` (set `PYCHARM_APP=/path/to/PyCharm.app` if installed elsewhere), runs the full 12-test suite, runs JetBrains Marketplace compliance checks, and generates `build/distributions/tri-model-orchestrator-1.0.0.zip`.
+This compiles against your installed `/Applications/PyCharm.app` (set `PYCHARM_APP=/path/to/PyCharm.app` if installed elsewhere), runs the full 14-test suite, runs JetBrains Marketplace compliance checks, and generates `build/distributions/tri-model-orchestrator-1.1.0.zip`.
 
 **Standard Gradle build (cross-platform, IntelliJ Platform Gradle Plugin 2.x):**
 ```bash
 gradle buildPlugin verifyPlugin
 ```
-Then install `build/distributions/tri-model-orchestrator-1.0.0.zip` via **Settings → Plugins → ⚙ → Install Plugin from Disk...**.
+Then install `build/distributions/tri-model-orchestrator-1.1.0.zip` via **Settings → Plugins → ⚙ → Install Plugin from Disk...**.
 
 ### Option 4: Private / Enterprise Custom Plugin Repository
 
@@ -56,8 +56,8 @@ Organizations hosting an internal JetBrains plugin repository can serve the rele
 ```xml
 <plugins>
   <plugin id="io.github.obelisk121.trimodel"
-          url="https://internal.example.com/plugins/tri-model-orchestrator-1.0.0.zip"
-          version="1.0.0">
+          url="https://internal.example.com/plugins/tri-model-orchestrator-1.1.0.zip"
+          version="1.1.0">
     <idea-version since-build="242"/>
     <name>Tri-Model AI Orchestrator</name>
   </plugin>
@@ -83,8 +83,17 @@ API keys are stored securely in **JetBrains PasswordSafe** (macOS Keychain / Win
 - Custom Base URLs (proxies, corporate gateways, OpenAI-compatible gateways) are supported per provider.
 - Click **Test Connection** on each tab (or **Test All Enabled Models**) to verify connectivity and measure latency.
 
-### Mode B: Local CLI Tools
-Switch any provider's **Connection mode** to **Local CLI Tool** to invoke locally authenticated CLIs (`claude`, `codex`, `gemini`) via safe non-shell `ProcessBuilder` execution (prompts are piped on `stdin` by default, or interpolated via `{prompt}`).
+### Mode B: Browser OAuth 2.0 (Temporary Session — Default Browser Pop-Up)
+Switch any provider's **Connection mode** to **Browser OAuth (Temporary Session)** to authorize via your default web browser using RFC 8252 (`127.0.0.1` loopback) + RFC 7636 PKCE (`S256`):
+1. Enter your registered **OAuth Client ID** (and optional Client Secret for Google Desktop OAuth apps; stored in `PasswordSafe`).
+2. Leave **Temporary session only (RAM only)** checked so the short-lived access token stays strictly in memory and clears automatically when PyCharm closes (or uncheck to store securely in `PasswordSafe` with automatic refresh).
+3. Click **Authorize in Browser...** (in Settings or via the **Auth** button in the **Tri-Model AI** tool window header) to open your default browser, approve authorization, and immediately return to PyCharm.
+4. Click **Sign Out** (or **Auth → Sign Out All Temporary Browser Sessions**) at any time to terminate the session immediately.
+
+> **Provider OAuth Note:** Google Gemini supports Google Cloud Desktop OAuth 2.0 directly (`generative-language` scope); ChatGPT uses registered OpenAI OAuth (`auth.openai.com`); Anthropic restricts third-party IDE OAuth to **Claude Platform OAuth** (billable API organizations) or enterprise OIDC gateways. For consumer subscriptions via official vendor CLIs, use **Mode C** below.
+
+### Mode C: Local CLI Tools (with Official Browser Login Helper)
+Switch any provider's **Connection mode** to **Local CLI Tool** to invoke locally authenticated CLIs (`claude`, `codex`, `gemini`) via safe non-shell `ProcessBuilder` execution (prompts are piped on `stdin` by default, or interpolated via `{prompt}`), and click **Browser Login via CLI** in Settings to launch the vendor's official CLI login flow (`claude login`, `codex login`, `gemini`).
 
 ---
 

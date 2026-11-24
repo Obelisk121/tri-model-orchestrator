@@ -53,8 +53,9 @@ You are responsible for ensuring that sending proprietary or personal data to yo
 
 ## 4. Credential & Local Storage
 
-- **API Keys:** Stored exclusively using **JetBrains PasswordSafe** (backed by macOS Keychain, Windows Credential Manager, or Linux Secret Service). API keys are **never** written to `tri-model-orchestrator.xml`, project files, or IDE logs. Optional environment variable fallbacks (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` / `GOOGLE_API_KEY`) are read in memory only.
-- **Non-Secret Settings:** Provider enablement flags, model IDs, base URLs, role assignments, and orchestration preferences are stored locally in JetBrains IDE configuration (`tri-model-orchestrator.xml`).
+- **API Keys & Optional OAuth Client Secrets:** Stored exclusively using **JetBrains PasswordSafe** (backed by macOS Keychain, Windows Credential Manager, or Linux Secret Service). Secrets are **never** written to `tri-model-orchestrator.xml`, project files, or IDE logs. Optional environment variable fallbacks (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` / `GOOGLE_API_KEY`) are read in memory only.
+- **Browser OAuth 2.0 (Temporary Session) Tokens:** When you use **Browser OAuth (Temporary Session)** mode, the plugin opens your default system browser to your configured provider's official OAuth 2.0 consent page using **PKCE (S256)** and a temporary localhost-only listener (`127.0.0.1`) that shuts down immediately after receiving the redirect. By default (`Temporary session only` enabled), the resulting access token is held **strictly in RAM**, no refresh token is retained, and the session is automatically wiped when PyCharm closes or when you click **Sign Out**. If you explicitly uncheck `Temporary session only`, the OAuth token is stored only in **JetBrains PasswordSafe** until you click **Sign Out**. The plugin **never** reads, scrapes, or extracts browser cookies or local browser profile databases.
+- **Non-Secret Settings:** Provider enablement flags, model IDs, base URLs, OAuth client IDs/endpoints, role assignments, and orchestration preferences are stored locally in JetBrains IDE configuration (`tri-model-orchestrator.xml`).
 - **Session History:** Held solely in memory during your IDE session and discarded when you click **New** or close the project.
 
 ---

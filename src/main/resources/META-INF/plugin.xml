@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>io.github.obelisk121.trimodel</id>
     <name>Tri-Model AI Orchestrator</name>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <vendor email="oabaiadze@gmail.com" url="https://github.com/Obelisk121/tri-model-orchestrator">Oto Abaiadze</vendor>
     <idea-version since-build="242"/>
 
@@ -12,16 +12,22 @@
     <ul>
       <li><b>5 Multi-Model Orchestration Modes:</b> Role Pipeline (Architect &rarr; Coder &rarr; Reviewer &rarr; Finalizer), Iterative Write-Review-Fix Loop (Coder &harr; Dual Reviewers), Parallel Council &amp; Cross-Critique Consensus, Tri-Model Deep Code Audit, and Parallel Side-by-Side Comparison.</li>
       <li><b>Flexible Role Assignment:</b> Assign Claude, ChatGPT, or Gemini to any engineering role (Architect, Coder, Reviewer, Chair/Synthesizer).</li>
-      <li><b>Direct Official APIs or Local CLIs:</b> Connect directly to Anthropic Messages API, OpenAI Responses/Chat Completions API, and Google Gemini Interactions/generateContent API with credentials stored securely in JetBrains PasswordSafe &mdash; or invoke locally installed CLIs (<code>claude</code>, <code>codex</code>, <code>gemini</code>).</li>
+      <li><b>Three Compliant Auth Modes per Model:</b> Official REST API Keys (stored in JetBrains PasswordSafe), <b>Temporary Browser OAuth 2.0 (PKCE + 127.0.0.1 loopback)</b> opening your default web browser with RAM-only sessions, or Local CLI tools (<code>claude</code>, <code>codex</code>, <code>gemini</code>).</li>
       <li><b>Deep IDE Integration:</b> Attaches active files, code selections, extra workspace files, and live IDE inspection diagnostics; previews proposed edits in the native Diff Viewer; applies single- or multi-file changes atomically with full Undo support.</li>
     </ul>
     <br/>
     <b>Privacy &amp; Data Handling:</b>
-    <p>Prompts, explicitly attached code snippets, and optional editor diagnostics are transmitted <b>directly</b> from your machine to the AI provider endpoints or local CLIs you configure. This extension operates no intermediary backend servers and collects zero telemetry or analytics. API keys are stored exclusively in JetBrains PasswordSafe (OS Keychain). See our <a href="https://github.com/Obelisk121/tri-model-orchestrator/blob/main/PRIVACY.md">Privacy Policy</a> and <a href="https://github.com/Obelisk121/tri-model-orchestrator/blob/main/SECURITY.md">Security Policy</a>.</p>
+    <p>Prompts, explicitly attached code snippets, and optional editor diagnostics are transmitted <b>directly</b> from your machine to the AI provider endpoints or local CLIs you configure. This extension operates no intermediary backend servers, collects zero telemetry or analytics, and never scrapes browser cookies. API keys are stored exclusively in JetBrains PasswordSafe, and temporary OAuth browser sessions remain strictly in RAM unless you explicitly opt in to persistence. See our <a href="https://github.com/Obelisk121/tri-model-orchestrator/blob/main/PRIVACY.md">Privacy Policy</a> and <a href="https://github.com/Obelisk121/tri-model-orchestrator/blob/main/SECURITY.md">Security Policy</a>.</p>
     <p><i>Independent open-source software licensed under Apache 2.0. Not affiliated with or endorsed by JetBrains, Anthropic, OpenAI, or Google.</i></p>
     ]]></description>
 
     <change-notes><![CDATA[
+    <b>1.1.0</b>
+    <ul>
+      <li>Added optional <b>Browser OAuth 2.0 (Temporary Session)</b> mode using RFC 8252 localhost loopback (<code>127.0.0.1</code>) and RFC 7636 PKCE (S256) in your default web browser, alongside existing API Key and Local CLI modes.</li>
+      <li>Added RAM-only temporary session mode (clears automatically when PyCharm closes) plus one-click <b>Auth</b> &amp; <b>Sign Out</b> controls in the Tool Window header and Settings.</li>
+      <li>Added <b>Browser Login via CLI</b> helper for Local CLI mode (<code>claude login</code>, <code>codex login</code>, <code>gemini</code>).</li>
+    </ul>
     <b>1.0.0</b>
     <ul>
       <li>Initial release integrating Claude, ChatGPT, and Gemini under five configurable orchestration workflows.</li>

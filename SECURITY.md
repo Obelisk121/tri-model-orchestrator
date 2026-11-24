@@ -4,9 +4,13 @@
 
 **Tri-Model AI Orchestrator** is designed with strict security boundaries suitable for professional IDE workflows and JetBrains Marketplace security review:
 
-1. **Secure Credential Isolation**
-   - API keys are stored strictly in **JetBrains PasswordSafe** (`SecretStorageService.java`) and are never serialized to `tri-model-orchestrator.xml` or written to disk in plain text.
-   - Each provider's API key is sent **only** to that specific provider's configured endpoint (`x-api-key` for Claude, `Authorization: Bearer` for ChatGPT, `x-goog-api-key` for Gemini).
+1. **Secure Credential Isolation & Browser OAuth 2.0 (PKCE)**
+   - API keys and optional OAuth client secrets are stored strictly in **JetBrains PasswordSafe** (`SecretStorageService.java`) and are never serialized to `tri-model-orchestrator.xml` or written to disk in plain text.
+   - Browser authorization uses standards-compliant **OAuth 2.0 Authorization Code + PKCE (S256)** (`OAuthPkceService.java`) opening the user's default browser (`BrowserUtil.browse`):
+     - Local callback server binds strictly to loopback (`127.0.0.1`), verifies CSRF `state` in constant time (`MessageDigest.isEqual`), enforces HTTPS for remote authorize/token endpoints, and shuts down immediately after the callback or timeout/cancellation.
+     - Temporary sessions default to **RAM-only** (never persisted to disk and stripped of long-lived refresh tokens), cleared automatically on IDE exit or **Sign Out**.
+     - The plugin **never** inspects browser cookies, browser SQLite databases, or unofficial consumer web session tokens.
+   - Each provider's credential is sent **only** to that specific provider's configured endpoint (`x-api-key` or `Authorization: Bearer` for Claude, `Authorization: Bearer` for ChatGPT, `x-goog-api-key` or `Authorization: Bearer` for Gemini).
    - Zero telemetry, zero hidden network calls, and zero third-party SDK/analytics bundles.
 
 2. **Safe File System Operations**
@@ -25,7 +29,8 @@
 
 | Version | Supported |
 | :--- | :--- |
-| `1.0.x` | Yes |
+| `1.1.x` | Yes |
+| `1.0.x` | Security fixes via upgrade to `1.1.x` |
 
 ## Reporting a Vulnerability
 

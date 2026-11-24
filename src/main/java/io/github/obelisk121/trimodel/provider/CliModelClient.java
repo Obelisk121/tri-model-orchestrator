@@ -234,6 +234,37 @@ public final class CliModelClient implements ModelClient {
         env.put("PATH", updated.toString());
     }
 
+    /**
+     * Launches the vendor's official CLI login command (e.g., 'claude login', 'codex login')
+     * so users can complete browser sign-in through the official CLI directly.
+     */
+    public static String launchOfficialCliLogin(ModelProviderType type, String executable) {
+        String bin = (executable == null || executable.isBlank()) ? type.getDefaultCliExecutable() : executable.trim();
+        String loginArgs = type.getDefaultCliLoginArgs();
+        List<String> cmd = new ArrayList<>();
+        cmd.add(bin);
+        cmd.addAll(tokenizeArgs(loginArgs));
+
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        enrichPathForGuiApps(pb.environment());
+        try {
+            Process p = pb.start();
+            // Let the CLI open the default browser; return non-blocking message
+            if (!p.waitFor(2, TimeUnit.SECONDS)) {
+                return "Launched '" + String.join(" ", cmd) + "' — complete sign-in in your browser, then click Test Connection.";
+            }
+            int code = p.exitValue();
+            return code == 0
+                    ? "CLI login completed successfully (" + String.join(" ", cmd) + ")."
+                    : "CLI login exited with code " + code + ". Try running '" + String.join(" ", cmd) + "' in PyCharm's Terminal.";
+        } catch (IOException e) {
+            return "Could not launch '" + bin + "': " + e.getMessage() + ". Install the CLI or specify its full path.";
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "CLI login launch interrupted.";
+        }
+    }
+
     private static long elapsedMs(long startNanos) {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
     }

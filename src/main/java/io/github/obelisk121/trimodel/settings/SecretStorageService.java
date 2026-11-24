@@ -12,12 +12,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Secure storage for API keys backed by JetBrains PasswordSafe with an EDT-safe memory cache
- * and environment variable fallback (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY).
+ * Secure storage for API keys, optional OAuth client secrets, and optionally persisted OAuth tokens,
+ * backed by JetBrains PasswordSafe with an EDT-safe memory cache and environment variable fallback.
  */
 public final class SecretStorageService {
     private static final String SUBSYSTEM = "TriModelAiOrchestrator";
-    private static final Map<ModelProviderType, String> CACHE = new ConcurrentHashMap<>();
+    private static final Map<String, String> CACHE = new ConcurrentHashMap<>();
     private static final AtomicBoolean CACHE_LOADED = new AtomicBoolean(false);
 
     private SecretStorageService() {
@@ -34,7 +34,9 @@ public final class SecretStorageService {
         }
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
             for (ModelProviderType type : ModelProviderType.values()) {
-                readDirectlyFromSafe(type);
+                readKeyFromSafe(apiKeySlot(type));
+                readKeyFromSafe(oauthSecretSlot(type));
+                readKeyFromSafe(oauthTokenSlot(type));
             }
             CACHE_LOADED.set(true);
             if (onLoaded != null) {
@@ -43,39 +45,14 @@ public final class SecretStorageService {
         });
     }
 
+    // ---- API Keys ----
+
     public static String getStoredApiKey(ModelProviderType provider) {
-        if (CACHE.containsKey(provider)) {
-            return CACHE.getOrDefault(provider, "");
-        }
-        if (ApplicationManager.getApplication() == null) {
-            return "";
-        }
-        // Avoid synchronous keychain lookup on EDT if cache hasn't finished warming yet
-        if (ApplicationManager.getApplication().isDispatchThread() && !CACHE_LOADED.get()) {
-            return "";
-        }
-        return readDirectlyFromSafe(provider);
+        return getSlot(apiKeySlot(provider));
     }
 
-    /**
-     * Loads the stored key directly from PasswordSafe (for Settings reset or background worker threads).
-     */
-    public static String loadStoredApiKeyBlocking(ModelProviderType provider) {
-        if (ApplicationManager.getApplication() == null) {
-            return CACHE.getOrDefault(provider, "");
-        }
-        return readDirectlyFromSafe(provider);
-    }
-
-    private static String readDirectlyFromSafe(ModelProviderType provider) {
-        try {
-            String pwd = PasswordSafe.getInstance().getPassword(attributesFor(provider));
-            String normalized = pwd == null ? "" : pwd.trim();
-            CACHE.put(provider, normalized);
-            return normalized;
-        } catch (Exception ignored) {
-            return CACHE.getOrDefault(provider, "");
-        }
+    public static void saveApiKey(ModelProviderType provider, String apiKey) {
+        saveSlot(apiKeySlot(provider), apiKey);
     }
 
     /**
@@ -111,21 +88,79 @@ public final class SecretStorageService {
         return false;
     }
 
-    public static void saveApiKey(ModelProviderType provider, String apiKey) {
-        String normalized = apiKey == null ? "" : apiKey.trim();
-        CACHE.put(provider, normalized);
+    // ---- Optional OAuth Client Secret (e.g., Google Desktop OAuth apps) ----
+
+    public static String getOAuthClientSecret(ModelProviderType provider) {
+        return getSlot(oauthSecretSlot(provider));
+    }
+
+    public static void saveOAuthClientSecret(ModelProviderType provider, String clientSecret) {
+        saveSlot(oauthSecretSlot(provider), clientSecret);
+    }
+
+    // ---- Optional Persistent OAuth Token (only written when temporaryOnly == false) ----
+
+    public static String getPersistedOAuthTokenJson(ModelProviderType provider) {
+        return getSlot(oauthTokenSlot(provider));
+    }
+
+    public static void savePersistedOAuthTokenJson(ModelProviderType provider, String tokenJson) {
+        saveSlot(oauthTokenSlot(provider), tokenJson);
+    }
+
+    // ---- Shared PasswordSafe Slot Helpers ----
+
+    private static String getSlot(String slot) {
+        if (CACHE.containsKey(slot)) {
+            return CACHE.getOrDefault(slot, "");
+        }
+        if (ApplicationManager.getApplication() == null) {
+            return "";
+        }
+        if (ApplicationManager.getApplication().isDispatchThread() && !CACHE_LOADED.get()) {
+            return "";
+        }
+        return readKeyFromSafe(slot);
+    }
+
+    private static String readKeyFromSafe(String slot) {
+        try {
+            String pwd = PasswordSafe.getInstance().getPassword(attributesFor(slot));
+            String normalized = pwd == null ? "" : pwd.trim();
+            CACHE.put(slot, normalized);
+            return normalized;
+        } catch (Exception ignored) {
+            return CACHE.getOrDefault(slot, "");
+        }
+    }
+
+    private static void saveSlot(String slot, String value) {
+        String normalized = value == null ? "" : value.trim();
+        CACHE.put(slot, normalized);
         CACHE_LOADED.set(true);
         if (ApplicationManager.getApplication() == null) {
             return;
         }
-        CredentialAttributes attrs = attributesFor(provider);
-        Credentials credentials = normalized.isEmpty() ? null : new Credentials(provider.name(), normalized);
+        CredentialAttributes attrs = attributesFor(slot);
+        Credentials credentials = normalized.isEmpty() ? null : new Credentials(slot, normalized);
         ApplicationManager.getApplication().executeOnPooledThread(() ->
                 PasswordSafe.getInstance().set(attrs, credentials));
     }
 
-    private static CredentialAttributes attributesFor(ModelProviderType provider) {
-        String serviceName = CredentialAttributesKt.generateServiceName(SUBSYSTEM, provider.name());
-        return new CredentialAttributes(serviceName, provider.name());
+    private static String apiKeySlot(ModelProviderType provider) {
+        return provider.name();
+    }
+
+    private static String oauthSecretSlot(ModelProviderType provider) {
+        return provider.name() + "_OAUTH_CLIENT_SECRET";
+    }
+
+    private static String oauthTokenSlot(ModelProviderType provider) {
+        return provider.name() + "_OAUTH_TOKEN";
+    }
+
+    private static CredentialAttributes attributesFor(String slot) {
+        String serviceName = CredentialAttributesKt.generateServiceName(SUBSYSTEM, slot);
+        return new CredentialAttributes(serviceName, slot);
     }
 }

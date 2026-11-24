@@ -25,10 +25,11 @@ public final class ClaudeClient implements ModelClient {
     private final String apiKey;
     private final String modelId;
     private final String anthropicVersion;
+    private final boolean useBearerAuth;
     private final HttpTransport.PostFunction transport;
 
     public ClaudeClient(String baseUrl, String apiKey, String modelId, String anthropicVersion) {
-        this(baseUrl, apiKey, modelId, anthropicVersion, HttpTransport::postJson);
+        this(baseUrl, apiKey, modelId, anthropicVersion, false, HttpTransport::postJson);
     }
 
     public ClaudeClient(
@@ -38,6 +39,17 @@ public final class ClaudeClient implements ModelClient {
             String anthropicVersion,
             HttpTransport.PostFunction transport
     ) {
+        this(baseUrl, apiKey, modelId, anthropicVersion, false, transport);
+    }
+
+    public ClaudeClient(
+            String baseUrl,
+            String apiKey,
+            String modelId,
+            String anthropicVersion,
+            boolean useBearerAuth,
+            HttpTransport.PostFunction transport
+    ) {
         this.baseUrl = trimTrailingSlashes(baseUrl == null || baseUrl.isBlank()
                 ? ModelProviderType.CLAUDE.getDefaultBaseUrl() : baseUrl);
         this.apiKey = apiKey == null ? "" : apiKey.trim();
@@ -45,6 +57,7 @@ public final class ClaudeClient implements ModelClient {
                 ? ModelProviderType.CLAUDE.getDefaultModel() : modelId.trim();
         this.anthropicVersion = (anthropicVersion == null || anthropicVersion.isBlank())
                 ? "2026-10-21" : anthropicVersion.trim();
+        this.useBearerAuth = useBearerAuth;
         this.transport = transport == null ? HttpTransport::postJson : transport;
     }
 
@@ -61,15 +74,21 @@ public final class ClaudeClient implements ModelClient {
     @Override
     public ModelResponse generate(ModelRequest request, BooleanSupplier isCancelled) {
         if (apiKey.isBlank()) {
-            return ModelResponse.error(ModelProviderType.CLAUDE, modelId,
-                    "Anthropic API key is not configured. Add it in Settings -> Tools -> Tri-Model AI Orchestrator or set ANTHROPIC_API_KEY.", 0);
+            String msg = useBearerAuth
+                    ? "Claude browser OAuth session is not active or has expired. Click 'Authorize in Browser' in Settings or the Tool Window."
+                    : "Anthropic API key is not configured. Add it in Settings -> Tools -> Tri-Model AI Orchestrator or set ANTHROPIC_API_KEY.";
+            return ModelResponse.error(ModelProviderType.CLAUDE, modelId, msg, 0);
         }
 
         String endpoint = buildEndpoint(baseUrl);
         JsonObject payload = buildPayload(request);
 
         Map<String, String> headers = new LinkedHashMap<>();
-        headers.put("x-api-key", apiKey);
+        if (useBearerAuth) {
+            headers.put("Authorization", "Bearer " + apiKey);
+        } else {
+            headers.put("x-api-key", apiKey);
+        }
         headers.put("anthropic-version", anthropicVersion);
 
         HttpTransport.HttpResult result = transport.post(

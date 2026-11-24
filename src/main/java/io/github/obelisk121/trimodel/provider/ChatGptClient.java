@@ -26,10 +26,11 @@ public final class ChatGptClient implements ModelClient {
     private final String apiKey;
     private final String modelId;
     private final OpenAiApiStyle apiStyle;
+    private final boolean oauthSession;
     private final HttpTransport.PostFunction transport;
 
     public ChatGptClient(String baseUrl, String apiKey, String modelId, OpenAiApiStyle apiStyle) {
-        this(baseUrl, apiKey, modelId, apiStyle, HttpTransport::postJson);
+        this(baseUrl, apiKey, modelId, apiStyle, false, HttpTransport::postJson);
     }
 
     public ChatGptClient(
@@ -39,12 +40,24 @@ public final class ChatGptClient implements ModelClient {
             OpenAiApiStyle apiStyle,
             HttpTransport.PostFunction transport
     ) {
+        this(baseUrl, apiKey, modelId, apiStyle, false, transport);
+    }
+
+    public ChatGptClient(
+            String baseUrl,
+            String apiKey,
+            String modelId,
+            OpenAiApiStyle apiStyle,
+            boolean oauthSession,
+            HttpTransport.PostFunction transport
+    ) {
         this.baseUrl = trimTrailingSlashes(baseUrl == null || baseUrl.isBlank()
                 ? ModelProviderType.CHATGPT.getDefaultBaseUrl() : baseUrl);
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.modelId = (modelId == null || modelId.isBlank())
                 ? ModelProviderType.CHATGPT.getDefaultModel() : modelId.trim();
         this.apiStyle = apiStyle == null ? OpenAiApiStyle.RESPONSES : apiStyle;
+        this.oauthSession = oauthSession;
         this.transport = transport == null ? HttpTransport::postJson : transport;
     }
 
@@ -61,8 +74,10 @@ public final class ChatGptClient implements ModelClient {
     @Override
     public ModelResponse generate(ModelRequest request, BooleanSupplier isCancelled) {
         if (apiKey.isBlank()) {
-            return ModelResponse.error(ModelProviderType.CHATGPT, modelId,
-                    "OpenAI API key is not configured. Add it in Settings -> Tools -> Tri-Model AI Orchestrator or set OPENAI_API_KEY.", 0);
+            String msg = oauthSession
+                    ? "ChatGPT browser OAuth session is not active or has expired. Click 'Authorize in Browser' in Settings or the Tool Window."
+                    : "OpenAI API key is not configured. Add it in Settings -> Tools -> Tri-Model AI Orchestrator or set OPENAI_API_KEY.";
+            return ModelResponse.error(ModelProviderType.CHATGPT, modelId, msg, 0);
         }
 
         Map<String, String> headers = new LinkedHashMap<>();

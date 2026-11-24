@@ -20,6 +20,10 @@ public enum ModelProviderType {
             "ANTHROPIC_API_KEY",
             "claude",
             "-p --output-format text",
+            "login",
+            "https://console.anthropic.com/oauth/authorize",
+            "https://console.anthropic.com/v1/oauth/token",
+            "user:profile",
             "#C96442",
             "#EA8C6E"
     ),
@@ -37,6 +41,10 @@ public enum ModelProviderType {
             "OPENAI_API_KEY",
             "codex",
             "exec -",
+            "login",
+            "https://auth.openai.com/oauth/authorize",
+            "https://auth.openai.com/oauth/token",
+            "openid profile email",
             "#0F9D78",
             "#2AD1A3"
     ),
@@ -55,6 +63,10 @@ public enum ModelProviderType {
             "GEMINI_API_KEY",
             "gemini",
             "-p \"\"",
+            "",
+            "https://accounts.google.com/o/oauth2/v2/auth",
+            "https://oauth2.googleapis.com/token",
+            "https://www.googleapis.com/auth/generative-language",
             "#2563EB",
             "#60A5FA"
     );
@@ -67,6 +79,10 @@ public enum ModelProviderType {
     private final String envVarName;
     private final String defaultCliExecutable;
     private final String defaultCliArgs;
+    private final String defaultCliLoginArgs;
+    private final String defaultOAuthAuthorizeUrl;
+    private final String defaultOAuthTokenUrl;
+    private final String defaultOAuthScopes;
     private final String lightAccentHex;
     private final String darkAccentHex;
 
@@ -79,6 +95,10 @@ public enum ModelProviderType {
             String envVarName,
             String defaultCliExecutable,
             String defaultCliArgs,
+            String defaultCliLoginArgs,
+            String defaultOAuthAuthorizeUrl,
+            String defaultOAuthTokenUrl,
+            String defaultOAuthScopes,
             String lightAccentHex,
             String darkAccentHex
     ) {
@@ -90,6 +110,10 @@ public enum ModelProviderType {
         this.envVarName = envVarName;
         this.defaultCliExecutable = defaultCliExecutable;
         this.defaultCliArgs = defaultCliArgs;
+        this.defaultCliLoginArgs = defaultCliLoginArgs;
+        this.defaultOAuthAuthorizeUrl = defaultOAuthAuthorizeUrl;
+        this.defaultOAuthTokenUrl = defaultOAuthTokenUrl;
+        this.defaultOAuthScopes = defaultOAuthScopes;
         this.lightAccentHex = lightAccentHex;
         this.darkAccentHex = darkAccentHex;
     }
@@ -124,6 +148,22 @@ public enum ModelProviderType {
 
     public String getDefaultCliArgs() {
         return defaultCliArgs;
+    }
+
+    public String getDefaultCliLoginArgs() {
+        return defaultCliLoginArgs;
+    }
+
+    public String getDefaultOAuthAuthorizeUrl() {
+        return defaultOAuthAuthorizeUrl;
+    }
+
+    public String getDefaultOAuthTokenUrl() {
+        return defaultOAuthTokenUrl;
+    }
+
+    public String getDefaultOAuthScopes() {
+        return defaultOAuthScopes;
     }
 
     public String getLightAccentHex() {
