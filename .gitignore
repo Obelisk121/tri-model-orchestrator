@@ -1,0 +1,20 @@
+# Gradle & Build outputs (compiled release archives are published via GitHub Releases)
+.gradle/
+build/
+out/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Local secrets / env files
+.env
+.env.*
+*.key
+*.pem
+
+# OS
+.DS_Store
+Thumbs.db

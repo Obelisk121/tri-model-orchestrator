@@ -1,0 +1,90 @@
+<idea-plugin>
+    <id>io.github.obelisk121.trimodel</id>
+    <name>Tri-Model AI Orchestrator</name>
+    <version>1.0.0</version>
+    <vendor email="oabaiadze@gmail.com" url="https://github.com/Obelisk121/tri-model-orchestrator">Oto Abaiadze</vendor>
+    <idea-version since-build="242"/>
+
+    <description><![CDATA[
+    Orchestrate Claude, ChatGPT, and Gemini together inside your IDE to write, analyze, review, and refine code under one unified workflow.
+    <br/><br/>
+    <b>Key Capabilities:</b>
+    <ul>
+      <li><b>5 Multi-Model Orchestration Modes:</b> Role Pipeline (Architect &rarr; Coder &rarr; Reviewer &rarr; Finalizer), Iterative Write-Review-Fix Loop (Coder &harr; Dual Reviewers), Parallel Council &amp; Cross-Critique Consensus, Tri-Model Deep Code Audit, and Parallel Side-by-Side Comparison.</li>
+      <li><b>Flexible Role Assignment:</b> Assign Claude, ChatGPT, or Gemini to any engineering role (Architect, Coder, Reviewer, Chair/Synthesizer).</li>
+      <li><b>Direct Official APIs or Local CLIs:</b> Connect directly to Anthropic Messages API, OpenAI Responses/Chat Completions API, and Google Gemini Interactions/generateContent API with credentials stored securely in JetBrains PasswordSafe &mdash; or invoke locally installed CLIs (<code>claude</code>, <code>codex</code>, <code>gemini</code>).</li>
+      <li><b>Deep IDE Integration:</b> Attaches active files, code selections, extra workspace files, and live IDE inspection diagnostics; previews proposed edits in the native Diff Viewer; applies single- or multi-file changes atomically with full Undo support.</li>
+    </ul>
+    <br/>
+    <b>Privacy &amp; Data Handling:</b>
+    <p>Prompts, explicitly attached code snippets, and optional editor diagnostics are transmitted <b>directly</b> from your machine to the AI provider endpoints or local CLIs you configure. This extension operates no intermediary backend servers and collects zero telemetry or analytics. API keys are stored exclusively in JetBrains PasswordSafe (OS Keychain). See our <a href="https://github.com/Obelisk121/tri-model-orchestrator/blob/main/PRIVACY.md">Privacy Policy</a> and <a href="https://github.com/Obelisk121/tri-model-orchestrator/blob/main/SECURITY.md">Security Policy</a>.</p>
+    <p><i>Independent open-source software licensed under Apache 2.0. Not affiliated with or endorsed by JetBrains, Anthropic, OpenAI, or Google.</i></p>
+    ]]></description>
+
+    <change-notes><![CDATA[
+    <b>1.0.0</b>
+    <ul>
+      <li>Initial release integrating Claude, ChatGPT, and Gemini under five configurable orchestration workflows.</li>
+      <li>Added native Diff Viewer preview, atomic Undo-capable single- and multi-file apply, and live IDE diagnostics context.</li>
+      <li>Added secure JetBrains PasswordSafe credential storage, environment variable fallback, and local CLI execution mode.</li>
+    </ul>
+    ]]></change-notes>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+                id="Tri-Model AI"
+                anchor="right"
+                icon="/icons/triModel.svg"
+                factoryClass="io.github.obelisk121.trimodel.ui.TriModelToolWindowFactory"/>
+
+        <applicationConfigurable
+                parentId="tools"
+                id="io.github.obelisk121.trimodel.settings"
+                displayName="Tri-Model AI Orchestrator"
+                instance="io.github.obelisk121.trimodel.settings.TriModelConfigurable"/>
+
+        <notificationGroup
+                id="Tri-Model AI Orchestrator"
+                displayType="BALLOON"/>
+    </extensions>
+
+    <actions>
+        <group id="TriModel.MainGroup" text="Tri-Model AI" description="Orchestrate Claude, ChatGPT, and Gemini" popup="true" icon="/icons/triModel.svg">
+            <add-to-group group-id="EditorPopupMenu" anchor="first"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+
+            <action id="TriModel.OrchestrateSelection"
+                    class="io.github.obelisk121.trimodel.actions.OrchestrateSelectionAction"
+                    text="Orchestrate &amp; Write Code (Pipeline)..."
+                    description="Open Tri-Model AI Pipeline with current file or selection attached">
+                <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift O"/>
+            </action>
+
+            <action id="TriModel.DeepAnalyze"
+                    class="io.github.obelisk121.trimodel.actions.DeepAnalyzeAction"
+                    text="Deep Analyze with Claude + ChatGPT + Gemini"
+                    description="Run parallel tri-model code analysis (bugs, security, architecture) on current file or selection">
+                <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift A"/>
+            </action>
+
+            <action id="TriModel.CouncilConsult"
+                    class="io.github.obelisk121.trimodel.actions.CouncilConsultAction"
+                    text="Ask Parallel Council (All 3 Models)..."
+                    description="Consult Claude, ChatGPT, and Gemini in parallel with cross-critique and consensus synthesis"/>
+
+            <action id="TriModel.FixBugs"
+                    class="io.github.obelisk121.trimodel.actions.FixBugsAction"
+                    text="Fix Bugs &amp; IDE Problems (Iterative Loop)"
+                    description="Run iterative write-and-dual-review loop with current file and IDE diagnostics"/>
+
+            <separator/>
+
+            <action id="TriModel.OpenSettings"
+                    class="io.github.obelisk121.trimodel.actions.OpenSettingsAction"
+                    text="Configure Models &amp; API Keys..."
+                    description="Open Tri-Model AI Orchestrator settings"/>
+        </group>
+    </actions>
+</idea-plugin>

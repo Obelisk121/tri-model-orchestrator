@@ -1,0 +1,37 @@
+name: Build & Verify Plugin
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.0.0'
+
+      - name: Build plugin archive
+        run: gradle buildPlugin --no-daemon
+
+      - name: Run JetBrains Plugin Verifier
+        run: gradle verifyPlugin --no-daemon
+
+      - name: Upload plugin distribution artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tri-model-orchestrator-plugin
+          path: build/distributions/*.zip

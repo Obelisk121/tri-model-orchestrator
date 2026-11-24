@@ -1,0 +1,19 @@
+Tri-Model AI Orchestrator
+Copyright 2026 Oto Abaiadze
+
+This product is licensed under the Apache License, Version 2.0.
+
+Third-Party Trademarks & Non-Affiliation Notice:
+- JetBrains, IntelliJ, and PyCharm are registered trademarks of JetBrains s.r.o.
+- Claude is a trademark of Anthropic, PBC.
+- ChatGPT and OpenAI are trademarks of OpenAI, L.L.C.
+- Gemini and Google are trademarks of Google LLC.
+
+Tri-Model AI Orchestrator is an independent open-source project and is not
+affiliated with, sponsored by, or endorsed by JetBrains s.r.o., Anthropic PBC,
+OpenAI, or Google LLC.
+
+Runtime Dependencies:
+- Uses only the host IntelliJ Platform APIs (including platform-bundled Gson,
+  licensed under Apache License 2.0) and the Java 21 standard library.
+- No third-party binary libraries are bundled inside the plugin distribution.
