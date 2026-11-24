@@ -1,9 +1,9 @@
 package io.github.obelisk121.trimodel.model;
 
 public enum ConnectionMode {
-    REST_API("Official REST API (API Key)"),
-    OAUTH_BROWSER("Browser OAuth (Temporary Session)"),
-    LOCAL_CLI("Local CLI Tool");
+    LOCAL_CLI("Browser Sign-In (No Client ID — Official CLI)"),
+    REST_API("API Key (Paste & Go)"),
+    OAUTH_BROWSER("Custom OAuth 2.0 (Own Client ID / Enterprise)");
 
     private final String displayName;
 

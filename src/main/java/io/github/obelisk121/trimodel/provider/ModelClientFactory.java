@@ -115,7 +115,7 @@ public final class ModelClientFactory {
             return false;
         }
         return switch (cfg.connectionMode == null ? ConnectionMode.REST_API : cfg.connectionMode) {
-            case LOCAL_CLI -> !cfg.effectiveCliExecutable(type).isBlank();
+            case LOCAL_CLI -> CliModelClient.isCliInstalled(type, cfg.effectiveCliExecutable(type));
             case OAUTH_BROWSER -> OAuthSessionStore.hasUsableSession(type);
             case REST_API -> !SecretStorageService.resolveApiKey(type).isBlank();
         };
@@ -127,7 +127,10 @@ public final class ModelClientFactory {
         }
         ConnectionMode mode = cfg.connectionMode == null ? ConnectionMode.REST_API : cfg.connectionMode;
         if (mode == ConnectionMode.LOCAL_CLI) {
-            return "CLI (" + cfg.effectiveCliExecutable(type) + ")";
+            boolean installed = CliModelClient.isCliInstalled(type, cfg.effectiveCliExecutable(type));
+            return installed
+                    ? "Browser Sign-In (" + cfg.effectiveCliExecutable(type) + " CLI)"
+                    : "CLI '" + cfg.effectiveCliExecutable(type) + "' not found";
         }
         if (mode == ConnectionMode.OAUTH_BROWSER) {
             OAuthToken token = OAuthSessionStore.getToken(type);

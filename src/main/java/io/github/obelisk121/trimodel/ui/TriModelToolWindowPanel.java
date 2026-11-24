@@ -22,13 +22,10 @@ import com.intellij.ui.components.JBTabbedPane;
 import com.intellij.ui.components.JBTextArea;
 import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.WrapLayout;
-import io.github.obelisk121.trimodel.auth.OAuthPkceService;
 import io.github.obelisk121.trimodel.auth.OAuthSessionStore;
-import io.github.obelisk121.trimodel.auth.OAuthToken;
 import io.github.obelisk121.trimodel.ide.CodeApplyService;
 import io.github.obelisk121.trimodel.ide.IdeContextService;
 import io.github.obelisk121.trimodel.ide.TriModelProjectService;
-import io.github.obelisk121.trimodel.model.ConnectionMode;
 import io.github.obelisk121.trimodel.model.ContextAttachment;
 import io.github.obelisk121.trimodel.model.ModelProviderType;
 import io.github.obelisk121.trimodel.model.OrchestrationListener;
@@ -50,15 +47,14 @@ import javax.swing.BoxLayout;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
 import javax.swing.JEditorPane;
-import javax.swing.JMenuItem;
 import javax.swing.JPanel;
-import javax.swing.JPopupMenu;
 import javax.swing.JProgressBar;
 import javax.swing.KeyStroke;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -67,6 +63,8 @@ import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
@@ -83,7 +81,6 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
     private final TriModelProjectService projectService;
     private final Runnable settingsChangedListener;
     private final Runnable oauthSessionListener;
-    private volatile AtomicBoolean oauthCancelFlag = new AtomicBoolean(false);
 
     // Header & Orchestration controls
     private final ComboBox<OrchestrationMode> modeCombo = new ComboBox<>(OrchestrationMode.values());
@@ -165,7 +162,6 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
         TriModelSettings.getInstance().removeChangeListener(this.settingsChangedListener);
         OAuthSessionStore.removeChangeListener(this.oauthSessionListener);
         cancelFlag.set(true);
-        oauthCancelFlag.set(true);
     }
 
     private JPanel buildTopHeader() {
@@ -187,26 +183,33 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
             pill.setOpaque(true);
             pill.setBorder(JBUI.Borders.empty(2, 6));
             pill.setFont(pill.getFont().deriveFont(Font.BOLD, 11f));
+            pill.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            pill.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseClicked(MouseEvent e) {
+                    openQuickSetup();
+                }
+            });
             statusBadges.put(type, pill);
             rightControls.add(pill);
         }
-        JButton browserAuthBtn = new JButton("Auth");
-        browserAuthBtn.setToolTipText("Authorize temporary Browser OAuth 2.0 session or sign out");
-        browserAuthBtn.addActionListener(e -> showBrowserAuthPopup(browserAuthBtn));
+        JButton quickSetupBtn = new JButton("Sign In");
+        quickSetupBtn.setToolTipText("Quick one-screen setup: Sign in via Browser or paste API keys for Claude, ChatGPT & Gemini");
+        quickSetupBtn.addActionListener(e -> openQuickSetup());
 
         JButton newSessionBtn = new JButton("New", AllIcons.Actions.Refresh);
         newSessionBtn.setToolTipText("Start a fresh orchestration session (clears conversation history)");
         newSessionBtn.addActionListener(e -> resetSession());
 
         JButton settingsBtn = new JButton(AllIcons.General.GearPlain);
-        settingsBtn.setToolTipText("Configure Claude, ChatGPT, and Gemini API keys, Browser OAuth, or Local CLIs");
+        settingsBtn.setToolTipText("All Settings (Orchestration Defaults, Custom URLs, Custom OAuth)");
         settingsBtn.addActionListener(e -> {
             ShowSettingsUtil.getInstance().showSettingsDialog(project, TriModelConfigurable.class);
             loadSettingsIntoControls();
             refreshProviderBadges();
         });
 
-        rightControls.add(browserAuthBtn);
+        rightControls.add(quickSetupBtn);
         rightControls.add(newSessionBtn);
         rightControls.add(settingsBtn);
 
@@ -411,8 +414,7 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
         runBtn.addActionListener(e -> startOrchestration());
         stopBtn.addActionListener(e -> {
             cancelFlag.set(true);
-            oauthCancelFlag.set(true);
-            statusLabel.setText("Cancelling in-flight operation...");
+            statusLabel.setText("Cancelling in-flight model calls...");
             stopBtn.setEnabled(false);
         });
 
@@ -522,12 +524,8 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
         refreshProviderBadges();
 
         if (clients.isEmpty()) {
-            statusLabel.setText("No models configured. Opening Settings...");
-            CodeApplyService.notify(project,
-                    "Please configure API keys (or Local CLI mode) for Claude, ChatGPT, and Gemini in Settings.",
-                    NotificationType.WARNING);
-            ShowSettingsUtil.getInstance().showSettingsDialog(project, TriModelConfigurable.class);
-            refreshProviderBadges();
+            statusLabel.setText("No models signed in yet. Opening Quick Setup...");
+            openQuickSetup();
             return;
         }
 
@@ -883,104 +881,11 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
         }
     }
 
-    private void showBrowserAuthPopup(JButton anchor) {
-        TriModelSettings settings = TriModelSettings.getInstance();
-        JPopupMenu menu = new JPopupMenu();
-
-        for (ModelProviderType type : ModelProviderType.values()) {
-            ProviderConfig cfg = settings.getProviderConfig(type);
-            OAuthToken token = OAuthSessionStore.getToken(type);
-            boolean hasActive = token != null && token.hasAccessToken() && !token.isExpired();
-            String suffix = cfg.connectionMode == ConnectionMode.OAUTH_BROWSER ? "" : " (switch mode in Settings)";
-
-            JMenuItem authItem = new JMenuItem("Authorize " + type.getShortName() + " in Browser..." + suffix);
-            authItem.addActionListener(e -> triggerQuickBrowserAuth(type));
-            menu.add(authItem);
-
-            if (hasActive) {
-                JMenuItem signOutItem = new JMenuItem("Sign Out " + type.getShortName() + " (" + token.statusSummary() + ")");
-                signOutItem.addActionListener(e -> {
-                    OAuthSessionStore.clearSession(type);
-                    statusLabel.setText("Signed out of " + type.getFullName() + " browser session.");
-                    refreshProviderBadges();
-                });
-                menu.add(signOutItem);
-            }
-        }
-
-        menu.addSeparator();
-        JMenuItem signOutAll = new JMenuItem("Sign Out All Temporary Browser Sessions");
-        signOutAll.addActionListener(e -> {
-            OAuthSessionStore.clearAllSessions();
-            statusLabel.setText("Cleared all temporary OAuth browser sessions.");
-            refreshProviderBadges();
-        });
-        menu.add(signOutAll);
-
-        JMenuItem openSettings = new JMenuItem("Configure API Keys & OAuth Client IDs...");
-        openSettings.addActionListener(e -> {
-            ShowSettingsUtil.getInstance().showSettingsDialog(project, TriModelConfigurable.class);
-            loadSettingsIntoControls();
-            refreshProviderBadges();
-        });
-        menu.add(openSettings);
-
-        menu.show(anchor, 0, anchor.getHeight());
-    }
-
-    private void triggerQuickBrowserAuth(ModelProviderType type) {
-        TriModelSettings settings = TriModelSettings.getInstance();
-        ProviderConfig cfg = settings.getProviderConfig(type).copy();
-        if (cfg.effectiveOAuthClientId().isBlank()) {
-            CodeApplyService.notify(project,
-                    "Enter an OAuth Client ID for " + type.getFullName()
-                            + " in Settings -> Tools -> Tri-Model AI Orchestrator first.",
-                    NotificationType.INFORMATION);
-            ShowSettingsUtil.getInstance().showSettingsDialog(project, TriModelConfigurable.class);
-            refreshProviderBadges();
-            return;
-        }
-        // Automatically switch provider into Browser OAuth mode if user invokes quick browser auth
-        if (cfg.connectionMode != ConnectionMode.OAUTH_BROWSER) {
-            cfg.connectionMode = ConnectionMode.OAUTH_BROWSER;
-            settings.setProviderConfig(type, cfg);
-            settings.notifySettingsChanged();
-        }
-
-        oauthCancelFlag = new AtomicBoolean(false);
-        stopBtn.setEnabled(true);
-        progressBar.setIndeterminate(true);
-        progressBar.setVisible(true);
-        statusLabel.setText("Opening default browser to authorize " + type.getFullName() + "...");
-
-        String clientSecret = SecretStorageService.getOAuthClientSecret(type);
-        ApplicationManager.getApplication().executeOnPooledThread(() -> {
-            OAuthPkceService.AuthResult result = new OAuthPkceService().authorizeInBrowser(
-                    type,
-                    cfg,
-                    clientSecret,
-                    null,
-                    msg -> SwingUtilities.invokeLater(() -> statusLabel.setText(msg)),
-                    oauthCancelFlag::get
-            );
-            SwingUtilities.invokeLater(() -> {
-                if (!isRunning) {
-                    stopBtn.setEnabled(false);
-                    progressBar.setIndeterminate(false);
-                    progressBar.setVisible(false);
-                }
-                refreshProviderBadges();
-                if (result.success()) {
-                    statusLabel.setText(type.getFullName() + ": " + result.token().statusSummary());
-                    CodeApplyService.notify(project,
-                            type.getFullName() + " authorized in temporary browser session.",
-                            NotificationType.INFORMATION);
-                } else {
-                    statusLabel.setText(type.getShortName() + " OAuth failed: " + result.errorMessage());
-                    CodeApplyService.notify(project, result.errorMessage(), NotificationType.WARNING);
-                }
-            });
-        });
+    private void openQuickSetup() {
+        QuickSetupDialog dialog = new QuickSetupDialog(project);
+        dialog.showAndGet();
+        loadSettingsIntoControls();
+        refreshProviderBadges();
     }
 
     private void renderWelcomeView() {
@@ -996,13 +901,12 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
                 - **Tri-Model Deep Code Audit**: Parallel 3-lens inspection (Bugs & Types, Security & Reliability, Architecture & Performance) consolidated into a severity-ranked report.
                 - **Parallel Side-by-Side Compare**: Compare Claude, ChatGPT, and Gemini side-by-side on the exact same prompt.
 
-                ### Getting Started
-                1. Click the **Settings (gear)** icon in the top-right to configure **API keys**, **Temporary Browser OAuth 2.0 (PKCE)**, or **Local CLI** mode (`claude`, `codex`, `gemini`). For temporary browser sessions, you can also click **Auth** directly in the top bar.
-                2. Open any file in PyCharm (or attach extra files with **+ Add Files**).
-                3. Pick an orchestration mode & roles above, type your request below, and press **Run Orchestration** (`Cmd/Ctrl+Enter`).
-                4. Inspect proposed edits in the **Code Changes** tab, open PyCharm's native **Diff Viewer**, and apply changes with full Undo support.
+                ### Getting Started (2 Simple Steps)
+                1. Click **Sign In** in the top-right bar (or click any model pill above) to connect **Claude**, **ChatGPT**, and **Gemini** on one screen — either with 1-click **Browser Sign-In** (no API key or Client ID needed) or by pasting an **API Key**.
+                2. Open any file in PyCharm, type your request below, and press **Run Orchestration** (`Cmd/Ctrl+Enter`).
+                3. Inspect proposed edits in the **Code Changes** tab, preview in PyCharm's native **Diff Viewer**, and apply with full Undo support.
 
-                > **Privacy Notice:** Nothing is sent until you explicitly run a prompt. Prompts and attached context are transmitted directly to your configured AI provider endpoints (Anthropic, OpenAI, Google, custom URL, or local CLI) with zero telemetry or intermediary servers. Temporary OAuth sessions live in RAM only and clear automatically when PyCharm closes or on **Sign Out**.
+                > **Privacy Notice:** Nothing is sent until you explicitly run a prompt. Prompts and attached context are transmitted directly to your configured AI provider endpoints with zero telemetry or intermediary servers.
                 """;
         setHtml(finalOutputPane, welcome);
         setHtml(timelinePane, "### Orchestration Timeline\n\n*Run an orchestration to trace every stage, latency, token count, and reviewer verdict here.*");

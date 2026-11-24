@@ -272,6 +272,9 @@ public final class TriModelPluginTestSuite {
     }
 
     private static void testCliClient() {
+        assertTrue(CliModelClient.resolveExecutable("python3") != null, "resolveExecutable finds python3");
+        assertTrue(CliModelClient.resolveExecutable("nonexistent_binary_xyz_999") == null, "resolveExecutable returns null for missing binary");
+
         CliModelClient stdinCli = new CliModelClient(
                 ModelProviderType.CLAUDE,
                 "/usr/bin/python3",

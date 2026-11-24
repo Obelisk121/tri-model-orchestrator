@@ -1,5 +1,6 @@
 package io.github.obelisk121.trimodel.settings;
 
+import com.intellij.ide.BrowserUtil;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.options.SearchableConfigurable;
 import com.intellij.openapi.ui.ComboBox;
@@ -38,7 +39,10 @@ import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.FlowLayout;
+import java.awt.Toolkit;
+import java.awt.datatransfer.StringSelection;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -46,8 +50,8 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Native PyCharm Settings page (Settings -> Tools -> Tri-Model AI Orchestrator).
- * Supports Official API Keys, Temporary Browser OAuth 2.0 (PKCE + loopback), and Local CLI tools.
+ * Clean, card-based PyCharm Settings page (Settings -> Tools -> Tri-Model AI Orchestrator).
+ * Displays only the fields relevant to the chosen sign-in method and keeps advanced options collapsed.
  */
 public final class TriModelConfigurable implements SearchableConfigurable {
 
@@ -82,10 +86,8 @@ public final class TriModelConfigurable implements SearchableConfigurable {
         rootPanel.setBorder(JBUI.Borders.empty(4));
 
         JBLabel header = new JBLabel(
-                "<html>Configure <b>Claude</b>, <b>ChatGPT</b>, and <b>Gemini</b> below using API keys, "
-                        + "<b>temporary Browser OAuth 2.0 (PKCE)</b>, or Local CLIs. "
-                        + "Secrets are stored only in JetBrains PasswordSafe (or RAM-only for temporary OAuth sessions). "
-                        + "Prompts and code go <b>directly</b> to your configured providers &mdash; zero telemetry.</html>");
+                "<html>Choose <b>Browser Sign-In</b> (no API key or Client ID needed) or paste an <b>API Key</b> "
+                        + "for Claude, ChatGPT, and Gemini. Prompts go <b>directly</b> to your providers &mdash; zero telemetry.</html>");
         header.setBorder(JBUI.Borders.emptyBottom(6));
         rootPanel.add(header, BorderLayout.NORTH);
 
@@ -103,7 +105,6 @@ public final class TriModelConfigurable implements SearchableConfigurable {
 
         JPanel footer = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
         JButton testAllBtn = new JButton("Test All Enabled Models");
-        JButton signOutAllBtn = new JButton("Sign Out All OAuth Sessions");
         JBLabel footerStatus = new JBLabel(" ");
         testAllBtn.addActionListener(e -> {
             footerStatus.setForeground(JBColor.foreground());
@@ -114,16 +115,7 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                 }
             }
         });
-        signOutAllBtn.addActionListener(e -> {
-            OAuthSessionStore.clearAllSessions();
-            for (ProviderEditor editor : providerEditors.values()) {
-                editor.refreshOAuthStatusLabel();
-            }
-            footerStatus.setForeground(JBColor.foreground());
-            footerStatus.setText("Cleared all temporary and saved OAuth browser sessions.");
-        });
         footer.add(testAllBtn);
-        footer.add(signOutAllBtn);
         footer.add(footerStatus);
         rootPanel.add(footer, BorderLayout.SOUTH);
 
@@ -274,37 +266,44 @@ public final class TriModelConfigurable implements SearchableConfigurable {
         final JBCheckBox enabledCheck = new JBCheckBox("Enable this provider in orchestrations");
         final ComboBox<ConnectionMode> connectionModeBox = new ComboBox<>(ConnectionMode.values());
 
-        // API Key fields
-        final JBPasswordField apiKeyField = new JBPasswordField();
-        final JBLabel envHintLabel = new JBLabel();
+        final CardLayout modeCardLayout = new CardLayout();
+        final JPanel modeCardsPanel = new JPanel(modeCardLayout);
 
-        // Model & endpoint fields (shared by REST API Key & Browser OAuth)
+        // Card 1: Browser Sign-In (Official CLI — simplest, zero Client ID)
+        final JBLabel cliDetectionLabel = new JBLabel();
+        final JButton cliLoginBtn = new JButton("Sign In in Browser");
+        final JButton cliLogoutBtn = new JButton("Sign Out");
+        final JButton cliCopyInstallBtn = new JButton("Copy Install Command");
+        final JButton cliRecheckBtn = new JButton("Re-check");
+        final JBTextField cliExecutableField = new JBTextField();
+        final JBTextField cliArgsField = new JBTextField();
+
+        // Card 2: API Key (Paste & Go)
+        final JBPasswordField apiKeyField = new JBPasswordField();
+        final JButton getApiKeyBtn = new JButton("Get API Key in Browser ↗");
+        final JBLabel envHintLabel = new JBLabel();
         final ComboBox<String> modelBox;
         final JBTextField baseUrlField = new JBTextField();
         final JBTextField anthropicVersionField = new JBTextField();
         final ComboBox<OpenAiApiStyle> openAiStyleBox = new ComboBox<>(OpenAiApiStyle.values());
         final ComboBox<GeminiApiStyle> geminiStyleBox = new ComboBox<>(GeminiApiStyle.values());
 
-        // Browser OAuth 2.0 (PKCE + Loopback) fields
+        // Card 3: Custom OAuth 2.0 (Own Client ID / Enterprise)
         final JBTextField oauthClientIdField = new JBTextField();
+        final JButton getOAuthClientBtn = new JButton("Create Client ID ↗");
         final JBPasswordField oauthClientSecretField = new JBPasswordField();
         final JBTextField oauthAuthorizeUrlField = new JBTextField();
         final JBTextField oauthTokenUrlField = new JBTextField();
         final JBTextField oauthScopesField = new JBTextField();
         final JSpinner oauthCallbackPortSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 65535, 1));
         final JBCheckBox oauthTemporaryOnlyCheck = new JBCheckBox(
-                "Temporary session only (RAM only — automatically cleared when PyCharm closes)", true);
+                "Temporary session only (RAM only — clears when PyCharm closes)", true);
         final JButton authorizeBrowserBtn = new JButton("Authorize in Browser...");
-        final JButton cancelAuthBtn = new JButton("Cancel Auth");
-        final JButton signOutBtn = new JButton("Sign Out");
+        final JButton cancelAuthBtn = new JButton("Cancel");
+        final JButton signOutOAuthBtn = new JButton("Sign Out");
         final JBLabel oauthStatusLabel = new JBLabel("Not authorized");
 
-        // Local CLI fields
-        final JBTextField cliExecutableField = new JBTextField();
-        final JBTextField cliArgsField = new JBTextField();
-        final JButton cliLoginBtn = new JButton("Browser Login via CLI");
-
-        // Test & Reset
+        // Shared bottom actions
         final JButton testButton = new JButton("Test Connection");
         final JButton resetDefaultsButton = new JButton("Reset Defaults");
         final JBLabel testStatusLabel = new JBLabel(" ");
@@ -318,80 +317,27 @@ public final class TriModelConfigurable implements SearchableConfigurable {
             this.modelBox = new ComboBox<>(presets.toArray(new String[0]));
             this.modelBox.setEditable(true);
 
-            apiKeyField.getEmptyText().setText("Stored securely in PasswordSafe (or leave blank to use " + type.getEnvVarName() + ")");
-            oauthClientIdField.getEmptyText().setText("Your registered OAuth 2.0 Client ID (PKCE loopback)");
-            oauthClientSecretField.getEmptyText().setText("Optional (used by Google Desktop OAuth apps; stored in PasswordSafe)");
-
-            boolean envDetected = SecretStorageService.hasEnvironmentKey(type);
-            envHintLabel.setText(envDetected
-                    ? "Environment variable " + type.getEnvVarName() + " detected (fallback when API Key field is blank)."
-                    : "Optional fallback: environment variable " + type.getEnvVarName() + " (currently unset).");
-            envHintLabel.setForeground(envDetected ? new JBColor(0x0F9D78, 0x2AD1A3) : JBColor.GRAY);
-
-            cancelAuthBtn.setEnabled(false);
-            JPanel oauthActionsRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-            oauthActionsRow.add(authorizeBrowserBtn);
-            oauthActionsRow.add(cancelAuthBtn);
-            oauthActionsRow.add(signOutBtn);
-
-            JPanel cliActionsRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-            cliActionsRow.add(cliLoginBtn);
-            cliActionsRow.add(new JBLabel("<html><small>Launches official CLI browser login (or prompts via stdin).</small></html>"));
+            modeCardsPanel.add(buildBrowserCliCard(), ConnectionMode.LOCAL_CLI.name());
+            modeCardsPanel.add(buildApiKeyCard(), ConnectionMode.REST_API.name());
+            modeCardsPanel.add(buildCustomOAuthCard(), ConnectionMode.OAUTH_BROWSER.name());
 
             JPanel actionsRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
             actionsRow.add(testButton);
             actionsRow.add(resetDefaultsButton);
             actionsRow.add(testStatusLabel);
 
-            FormBuilder fb = FormBuilder.createFormBuilder()
+            this.panel = FormBuilder.createFormBuilder()
                     .addComponent(enabledCheck)
-                    .addLabeledComponent("Connection mode:", connectionModeBox)
+                    .addLabeledComponent("Sign-in method:", connectionModeBox)
                     .addSeparator(8)
-                    .addLabeledComponent("Model ID:", modelBox)
-                    .addLabeledComponent("API Base URL:", baseUrlField);
-
-            if (type == ModelProviderType.CLAUDE) {
-                fb.addLabeledComponent("Anthropic API Version:", anthropicVersionField);
-            } else if (type == ModelProviderType.CHATGPT) {
-                fb.addLabeledComponent("OpenAI API Protocol:", openAiStyleBox);
-            } else if (type == ModelProviderType.GEMINI) {
-                fb.addLabeledComponent("Gemini API Protocol:", geminiStyleBox);
-            }
-
-            fb.addSeparator(8)
-                    .addLabeledComponent("API Key (REST mode):", apiKeyField)
-                    .addComponent(envHintLabel)
-                    .addSeparator(8)
-                    .addComponent(new JBLabel("<html><b>Browser OAuth 2.0 (PKCE + Localhost Loopback)</b> &mdash; "
-                            + providerOAuthHint(type) + "</html>"))
-                    .addLabeledComponent("OAuth Client ID:", oauthClientIdField)
-                    .addLabeledComponent("OAuth Client Secret (optional):", oauthClientSecretField)
-                    .addLabeledComponent("Authorize URL:", oauthAuthorizeUrlField)
-                    .addLabeledComponent("Token URL:", oauthTokenUrlField)
-                    .addLabeledComponent("Scopes:", oauthScopesField)
-                    .addLabeledComponent("Loopback callback port (0 = auto):", oauthCallbackPortSpinner)
-                    .addComponent(oauthTemporaryOnlyCheck)
-                    .addLabeledComponent("OAuth Session:", oauthStatusLabel)
-                    .addComponent(oauthActionsRow)
-                    .addSeparator(8)
-                    .addLabeledComponent("Local CLI executable:", cliExecutableField)
-                    .addLabeledComponent("Local CLI arguments:", cliArgsField)
-                    .addComponent(cliActionsRow)
+                    .addComponent(modeCardsPanel)
                     .addSeparator(8)
                     .addComponent(actionsRow)
-                    .addComponentFillVertically(new JPanel(), 0);
-
-            this.panel = fb.getPanel();
+                    .addComponentFillVertically(new JPanel(), 0)
+                    .getPanel();
             this.panel.setBorder(JBUI.Borders.empty(10));
 
-            connectionModeBox.addActionListener(e -> updateModeFieldStates());
-            authorizeBrowserBtn.addActionListener(e -> startBrowserAuthorization());
-            cancelAuthBtn.addActionListener(e -> cancelActiveAuth());
-            signOutBtn.addActionListener(e -> {
-                OAuthSessionStore.clearSession(type);
-                refreshOAuthStatusLabel();
-            });
-            cliLoginBtn.addActionListener(e -> runCliBrowserLogin());
+            connectionModeBox.addActionListener(e -> showActiveModeCard());
             testButton.addActionListener(e -> runConnectionTest());
             resetDefaultsButton.addActionListener(e -> {
                 ProviderConfig def = ProviderConfig.defaultsFor(type);
@@ -399,12 +345,135 @@ public final class TriModelConfigurable implements SearchableConfigurable {
             });
         }
 
-        private static String providerOAuthHint(ModelProviderType type) {
-            return switch (type) {
-                case GEMINI -> "Uses official Google OAuth 2.0 Desktop App PKCE (127.0.0.1 callback).";
-                case CHATGPT -> "Uses official OpenAI OAuth 2.0 PKCE (or switch to Local CLI for 'codex login').";
-                case CLAUDE -> "Uses Claude Platform OAuth / OIDC gateway (for Claude Pro/Max CLI, use Local CLI mode).";
-            };
+        private JPanel buildBrowserCliCard() {
+            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+            buttons.add(cliLoginBtn);
+            if (!type.getDefaultCliLogoutArgs().isBlank()) {
+                buttons.add(cliLogoutBtn);
+            }
+            buttons.add(cliCopyInstallBtn);
+            buttons.add(cliRecheckBtn);
+
+            JPanel advancedPanel = FormBuilder.createFormBuilder()
+                    .addLabeledComponent("CLI executable:", cliExecutableField)
+                    .addLabeledComponent("CLI arguments:", cliArgsField)
+                    .getPanel();
+            advancedPanel.setVisible(false);
+
+            JButton advToggle = createCollapsibleToggle("Advanced CLI options", advancedPanel);
+
+            cliLoginBtn.addActionListener(e -> runCliBrowserLogin());
+            cliLogoutBtn.addActionListener(e -> runCliLogout());
+            cliCopyInstallBtn.addActionListener(e -> {
+                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(type.getCliInstallHint()), null);
+                testStatusLabel.setForeground(JBColor.foreground());
+                testStatusLabel.setText("Copied: " + type.getCliInstallHint());
+            });
+            cliRecheckBtn.addActionListener(e -> refreshCliDetection());
+
+            return FormBuilder.createFormBuilder()
+                    .addComponent(new JBLabel("<html>Uses your official <code>" + type.getDefaultCliExecutable()
+                            + "</code> CLI to sign in via your default web browser &mdash; <b>no API key or OAuth Client ID needed</b>.</html>"))
+                    .addLabeledComponent("CLI status:", cliDetectionLabel)
+                    .addComponent(buttons)
+                    .addComponent(advToggle)
+                    .addComponent(advancedPanel)
+                    .getPanel();
+        }
+
+        private JPanel buildApiKeyCard() {
+            apiKeyField.getEmptyText().setText("Paste your " + type.getShortName() + " API key (saved securely in Keychain)");
+            JPanel keyRow = new JPanel(new BorderLayout(6, 0));
+            keyRow.add(apiKeyField, BorderLayout.CENTER);
+            keyRow.add(getApiKeyBtn, BorderLayout.EAST);
+
+            boolean envDetected = SecretStorageService.hasEnvironmentKey(type);
+            envHintLabel.setText(envDetected
+                    ? "Detected " + type.getEnvVarName() + " in environment (used automatically if field is left blank)."
+                    : "Optional: leave blank if you already export " + type.getEnvVarName() + ".");
+            envHintLabel.setForeground(envDetected ? new JBColor(0x0F9D78, 0x2AD1A3) : JBColor.GRAY);
+
+            FormBuilder advBuilder = FormBuilder.createFormBuilder()
+                    .addLabeledComponent("API Base URL:", baseUrlField);
+            if (type == ModelProviderType.CLAUDE) {
+                advBuilder.addLabeledComponent("Anthropic API Version:", anthropicVersionField);
+            } else if (type == ModelProviderType.CHATGPT) {
+                advBuilder.addLabeledComponent("OpenAI API Protocol:", openAiStyleBox);
+            } else if (type == ModelProviderType.GEMINI) {
+                advBuilder.addLabeledComponent("Gemini API Protocol:", geminiStyleBox);
+            }
+            JPanel advancedPanel = advBuilder.getPanel();
+            advancedPanel.setVisible(false);
+
+            JButton advToggle = createCollapsibleToggle("Advanced API options (Base URL / Protocol)", advancedPanel);
+            getApiKeyBtn.addActionListener(e -> BrowserUtil.browse(type.getApiKeyConsoleUrl()));
+
+            return FormBuilder.createFormBuilder()
+                    .addLabeledComponent("API Key:", keyRow)
+                    .addComponent(envHintLabel)
+                    .addLabeledComponent("Model:", modelBox)
+                    .addComponent(advToggle)
+                    .addComponent(advancedPanel)
+                    .getPanel();
+        }
+
+        private JPanel buildCustomOAuthCard() {
+            oauthClientIdField.getEmptyText().setText("Paste your registered OAuth 2.0 Client ID");
+            oauthClientSecretField.getEmptyText().setText("Optional (needed by Google Desktop OAuth apps)");
+
+            JPanel clientIdRow = new JPanel(new BorderLayout(6, 0));
+            clientIdRow.add(oauthClientIdField, BorderLayout.CENTER);
+            clientIdRow.add(getOAuthClientBtn, BorderLayout.EAST);
+
+            cancelAuthBtn.setEnabled(false);
+            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+            buttons.add(authorizeBrowserBtn);
+            buttons.add(cancelAuthBtn);
+            buttons.add(signOutOAuthBtn);
+
+            JPanel advancedPanel = FormBuilder.createFormBuilder()
+                    .addLabeledComponent("Authorize URL:", oauthAuthorizeUrlField)
+                    .addLabeledComponent("Token URL:", oauthTokenUrlField)
+                    .addLabeledComponent("Scopes:", oauthScopesField)
+                    .addLabeledComponent("Loopback port (0 = auto):", oauthCallbackPortSpinner)
+                    .getPanel();
+            advancedPanel.setVisible(false);
+
+            JButton advToggle = createCollapsibleToggle("Advanced OAuth endpoints (URLs / Scopes / Port)", advancedPanel);
+
+            getOAuthClientBtn.addActionListener(e -> BrowserUtil.browse(type.getOAuthConsoleUrl()));
+            authorizeBrowserBtn.addActionListener(e -> startBrowserAuthorization());
+            cancelAuthBtn.addActionListener(e -> cancelActiveAuth());
+            signOutOAuthBtn.addActionListener(e -> {
+                OAuthSessionStore.clearSession(type);
+                refreshOAuthStatusLabel();
+            });
+
+            return FormBuilder.createFormBuilder()
+                    .addComponent(new JBLabel("<html>For users with their own OAuth 2.0 Client ID (e.g., Google Cloud Desktop app or enterprise SSO). "
+                            + "For zero-setup browser sign-in, pick <b>Browser Sign-In</b> above instead.</html>"))
+                    .addLabeledComponent("OAuth Client ID:", clientIdRow)
+                    .addLabeledComponent("Client Secret (optional):", oauthClientSecretField)
+                    .addComponent(oauthTemporaryOnlyCheck)
+                    .addLabeledComponent("Session status:", oauthStatusLabel)
+                    .addComponent(buttons)
+                    .addComponent(advToggle)
+                    .addComponent(advancedPanel)
+                    .getPanel();
+        }
+
+        private static JButton createCollapsibleToggle(String title, JPanel target) {
+            JButton toggle = new JButton("▸ " + title);
+            toggle.setBorderPainted(false);
+            toggle.setContentAreaFilled(false);
+            toggle.setHorizontalAlignment(JButton.LEFT);
+            toggle.addActionListener(e -> {
+                boolean next = !target.isVisible();
+                target.setVisible(next);
+                toggle.setText((next ? "▾ " : "▸ ") + title);
+                target.revalidate();
+            });
+            return toggle;
         }
 
         void loadFrom(ProviderConfig cfg, String storedKey, String storedOAuthSecret) {
@@ -428,39 +497,32 @@ public final class TriModelConfigurable implements SearchableConfigurable {
             cliExecutableField.setText(cfg.effectiveCliExecutable(type));
             cliArgsField.setText(cfg.effectiveCliArgs(type));
 
+            refreshCliDetection();
             refreshOAuthStatusLabel();
-            updateModeFieldStates();
+            showActiveModeCard();
         }
 
-        void updateModeFieldStates() {
+        void showActiveModeCard() {
             ConnectionMode mode = (ConnectionMode) connectionModeBox.getSelectedItem();
-            boolean isRestKey = mode == ConnectionMode.REST_API;
-            boolean isOAuth = mode == ConnectionMode.OAUTH_BROWSER;
-            boolean isCli = mode == ConnectionMode.LOCAL_CLI;
+            if (mode == null) mode = ConnectionMode.REST_API;
+            modeCardLayout.show(modeCardsPanel, mode.name());
+        }
 
-            // Model / Endpoint fields apply to both REST API Key and Browser OAuth
-            boolean usesHttpApi = isRestKey || isOAuth;
-            modelBox.setEnabled(usesHttpApi);
-            baseUrlField.setEnabled(usesHttpApi);
-            anthropicVersionField.setEnabled(usesHttpApi);
-            openAiStyleBox.setEnabled(usesHttpApi);
-            geminiStyleBox.setEnabled(usesHttpApi);
-
-            apiKeyField.setEnabled(isRestKey);
-
-            oauthClientIdField.setEnabled(isOAuth);
-            oauthClientSecretField.setEnabled(isOAuth);
-            oauthAuthorizeUrlField.setEnabled(isOAuth);
-            oauthTokenUrlField.setEnabled(isOAuth);
-            oauthScopesField.setEnabled(isOAuth);
-            oauthCallbackPortSpinner.setEnabled(isOAuth);
-            oauthTemporaryOnlyCheck.setEnabled(isOAuth);
-            authorizeBrowserBtn.setEnabled(isOAuth);
-            signOutBtn.setEnabled(isOAuth);
-
-            cliExecutableField.setEnabled(isCli);
-            cliArgsField.setEnabled(isCli);
-            cliLoginBtn.setEnabled(isCli);
+        void refreshCliDetection() {
+            String exe = cliExecutableField.getText().trim();
+            if (exe.isBlank()) exe = type.getDefaultCliExecutable();
+            String resolved = CliModelClient.resolveExecutable(exe);
+            if (resolved != null) {
+                cliDetectionLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
+                cliDetectionLabel.setText("✓ Installed (" + resolved + ")");
+                cliLoginBtn.setEnabled(true);
+                cliCopyInstallBtn.setVisible(false);
+            } else {
+                cliDetectionLabel.setForeground(new JBColor(0xD97706, 0xF59E0B));
+                cliDetectionLabel.setText("Not installed — run: " + type.getCliInstallHint());
+                cliLoginBtn.setEnabled(false);
+                cliCopyInstallBtn.setVisible(true);
+            }
         }
 
         void refreshOAuthStatusLabel() {
@@ -473,7 +535,7 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                 oauthStatusLabel.setText(token.statusSummary());
             } else {
                 oauthStatusLabel.setForeground(JBColor.GRAY);
-                oauthStatusLabel.setText("Not authorized — click 'Authorize in Browser...' to start a temporary session.");
+                oauthStatusLabel.setText("Not authorized");
             }
         }
 
@@ -484,20 +546,16 @@ public final class TriModelConfigurable implements SearchableConfigurable {
             authorizeBrowserBtn.setEnabled(false);
             cancelAuthBtn.setEnabled(true);
             oauthStatusLabel.setForeground(JBColor.foreground());
-            oauthStatusLabel.setText("Starting localhost loopback listener...");
+            oauthStatusLabel.setText("Starting localhost listener...");
 
             Runnable task = () -> {
-                OAuthPkceService service = new OAuthPkceService();
-                OAuthPkceService.AuthResult result = service.authorizeInBrowser(
-                        type,
-                        cfg,
-                        clientSecret,
-                        null,
+                OAuthPkceService.AuthResult result = new OAuthPkceService().authorizeInBrowser(
+                        type, cfg, clientSecret, null,
                         msg -> SwingUtilities.invokeLater(() -> oauthStatusLabel.setText(msg)),
                         authCancelFlag::get
                 );
                 SwingUtilities.invokeLater(() -> {
-                    authorizeBrowserBtn.setEnabled(connectionModeBox.getSelectedItem() == ConnectionMode.OAUTH_BROWSER);
+                    authorizeBrowserBtn.setEnabled(true);
                     cancelAuthBtn.setEnabled(false);
                     if (result.success()) {
                         refreshOAuthStatusLabel();
@@ -507,12 +565,7 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                     }
                 });
             };
-
-            if (ApplicationManager.getApplication() != null) {
-                ApplicationManager.getApplication().executeOnPooledThread(task);
-            } else {
-                new Thread(task, "TriModel-OAuth-" + type.name()).start();
-            }
+            runAsync(task, "TriModel-OAuth-" + type.name());
         }
 
         void cancelActiveAuth() {
@@ -524,19 +577,30 @@ public final class TriModelConfigurable implements SearchableConfigurable {
             String exe = cliExecutableField.getText().trim();
             cliLoginBtn.setEnabled(false);
             testStatusLabel.setForeground(JBColor.foreground());
-            testStatusLabel.setText("Launching official CLI browser login...");
-            Runnable task = () -> {
-                String msg = CliModelClient.launchOfficialCliLogin(type, exe);
+            testStatusLabel.setText("Launching browser sign-in for " + type.getShortName() + "...");
+            runAsync(() -> {
+                String msg = CliModelClient.launchOfficialCliLogin(
+                        type, exe, s -> SwingUtilities.invokeLater(() -> testStatusLabel.setText(s)));
                 SwingUtilities.invokeLater(() -> {
-                    cliLoginBtn.setEnabled(connectionModeBox.getSelectedItem() == ConnectionMode.LOCAL_CLI);
+                    cliLoginBtn.setEnabled(true);
+                    testStatusLabel.setForeground(msg.contains("successfully")
+                            ? new JBColor(0x0F9D78, 0x2AD1A3) : JBColor.foreground());
                     testStatusLabel.setText(msg);
                 });
-            };
-            if (ApplicationManager.getApplication() != null) {
-                ApplicationManager.getApplication().executeOnPooledThread(task);
-            } else {
-                new Thread(task, "TriModel-CliLogin-" + type.name()).start();
-            }
+            }, "TriModel-CliLogin-" + type.name());
+        }
+
+        void runCliLogout() {
+            String exe = cliExecutableField.getText().trim();
+            cliLogoutBtn.setEnabled(false);
+            runAsync(() -> {
+                String msg = CliModelClient.launchOfficialCliLogout(type, exe);
+                SwingUtilities.invokeLater(() -> {
+                    cliLogoutBtn.setEnabled(true);
+                    testStatusLabel.setForeground(JBColor.foreground());
+                    testStatusLabel.setText(msg);
+                });
+            }, "TriModel-CliLogout-" + type.name());
         }
 
         ProviderConfig toConfig() {
@@ -575,7 +639,7 @@ public final class TriModelConfigurable implements SearchableConfigurable {
             testStatusLabel.setForeground(JBColor.foreground());
             testStatusLabel.setText("Testing " + type.getShortName() + "...");
 
-            Runnable task = () -> {
+            runAsync(() -> {
                 ModelClient client = ModelClientFactory.createClient(type, cfg, key);
                 ModelRequest ping = new ModelRequest(
                         "Reply with exactly: OK",
@@ -589,22 +653,24 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                     testButton.setEnabled(true);
                     if (resp.success()) {
                         testStatusLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
-                        testStatusLabel.setText("Connected (" + resp.latencyMs() + "ms) - " + resp.modelId());
+                        testStatusLabel.setText("✓ Connected (" + resp.latencyMs() + "ms) - " + resp.modelId());
                     } else {
                         testStatusLabel.setForeground(JBColor.RED);
                         String err = resp.errorMessage();
                         if (err.length() > 110) {
                             err = err.substring(0, 110) + "...";
                         }
-                        testStatusLabel.setText("Failed: " + err);
+                        testStatusLabel.setText("✗ " + err);
                     }
                 });
-            };
+            }, "TriModel-Test-" + type.name());
+        }
 
+        private static void runAsync(Runnable task, String threadName) {
             if (ApplicationManager.getApplication() != null) {
                 ApplicationManager.getApplication().executeOnPooledThread(task);
             } else {
-                new Thread(task, "TriModel-Test-" + type.name()).start();
+                new Thread(task, threadName).start();
             }
         }
     }

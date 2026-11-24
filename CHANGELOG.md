@@ -4,6 +4,13 @@ All notable changes to **Tri-Model AI Orchestrator** are documented in this file
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-11-24
+
+### Improved
+- **One-Screen Quick Sign-In & Setup (`QuickSetupDialog`):** Click **Sign In** in the Tool Window header (or click any model pill) to connect Claude, ChatGPT, and Gemini on a single clean dialog using either 1-click **Browser Sign-In** (no API key or OAuth Client ID required) or **API Key** (with 1-click `Get Key ↗` links).
+- **Decluttered Settings UI:** Switched each provider tab in Settings to a `CardLayout` that shows only the active sign-in method and tucks Base URL, API protocol, Custom OAuth endpoints, and CLI args inside collapsible **Advanced** sections.
+- **macOS/Linux CLI Auto-Detection & Exact Login Commands:** `CliModelClient.resolveExecutable(...)` resolves Homebrew (`/opt/homebrew/bin`), `/usr/local/bin`, `~/.local/bin`, `~/.npm-global/bin`, and `nvm` paths directly so PyCharm GUI always finds `claude`, `codex`, and `gemini`, using exact official login/logout commands (`claude auth login`, `codex login`, `gemini`) and auto-opening printed auth URLs in the default browser.
+
 ## [1.1.0] - 2026-11-24
 
 ### Added

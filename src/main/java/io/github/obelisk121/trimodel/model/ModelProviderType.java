@@ -18,9 +18,13 @@ public enum ModelProviderType {
                     "claude-haiku-5-5"
             ),
             "ANTHROPIC_API_KEY",
+            "https://console.anthropic.com/settings/keys",
+            "https://console.anthropic.com/",
             "claude",
             "-p --output-format text",
-            "login",
+            "auth login",
+            "auth logout",
+            "brew install --cask claude-code",
             "https://console.anthropic.com/oauth/authorize",
             "https://console.anthropic.com/v1/oauth/token",
             "user:profile",
@@ -39,9 +43,13 @@ public enum ModelProviderType {
                     "gpt-6-luna"
             ),
             "OPENAI_API_KEY",
+            "https://platform.openai.com/api-keys",
+            "https://platform.openai.com/",
             "codex",
             "exec -",
             "login",
+            "logout",
+            "npm install -g @openai/codex",
             "https://auth.openai.com/oauth/authorize",
             "https://auth.openai.com/oauth/token",
             "openid profile email",
@@ -61,9 +69,13 @@ public enum ModelProviderType {
                     "gemini-3.8-flash"
             ),
             "GEMINI_API_KEY",
+            "https://aistudio.google.com/apikey",
+            "https://console.cloud.google.com/apis/credentials",
             "gemini",
-            "-p \"\"",
+            "-p \"\" -o text",
+            "-p \"Reply OK\"",
             "",
+            "npm install -g @google/gemini-cli",
             "https://accounts.google.com/o/oauth2/v2/auth",
             "https://oauth2.googleapis.com/token",
             "https://www.googleapis.com/auth/generative-language",
@@ -77,9 +89,13 @@ public enum ModelProviderType {
     private final String defaultModel;
     private final List<String> modelPresets;
     private final String envVarName;
+    private final String apiKeyConsoleUrl;
+    private final String oauthConsoleUrl;
     private final String defaultCliExecutable;
     private final String defaultCliArgs;
     private final String defaultCliLoginArgs;
+    private final String defaultCliLogoutArgs;
+    private final String cliInstallHint;
     private final String defaultOAuthAuthorizeUrl;
     private final String defaultOAuthTokenUrl;
     private final String defaultOAuthScopes;
@@ -93,9 +109,13 @@ public enum ModelProviderType {
             String defaultModel,
             List<String> modelPresets,
             String envVarName,
+            String apiKeyConsoleUrl,
+            String oauthConsoleUrl,
             String defaultCliExecutable,
             String defaultCliArgs,
             String defaultCliLoginArgs,
+            String defaultCliLogoutArgs,
+            String cliInstallHint,
             String defaultOAuthAuthorizeUrl,
             String defaultOAuthTokenUrl,
             String defaultOAuthScopes,
@@ -108,9 +128,13 @@ public enum ModelProviderType {
         this.defaultModel = defaultModel;
         this.modelPresets = modelPresets;
         this.envVarName = envVarName;
+        this.apiKeyConsoleUrl = apiKeyConsoleUrl;
+        this.oauthConsoleUrl = oauthConsoleUrl;
         this.defaultCliExecutable = defaultCliExecutable;
         this.defaultCliArgs = defaultCliArgs;
         this.defaultCliLoginArgs = defaultCliLoginArgs;
+        this.defaultCliLogoutArgs = defaultCliLogoutArgs;
+        this.cliInstallHint = cliInstallHint;
         this.defaultOAuthAuthorizeUrl = defaultOAuthAuthorizeUrl;
         this.defaultOAuthTokenUrl = defaultOAuthTokenUrl;
         this.defaultOAuthScopes = defaultOAuthScopes;
@@ -142,6 +166,14 @@ public enum ModelProviderType {
         return envVarName;
     }
 
+    public String getApiKeyConsoleUrl() {
+        return apiKeyConsoleUrl;
+    }
+
+    public String getOAuthConsoleUrl() {
+        return oauthConsoleUrl;
+    }
+
     public String getDefaultCliExecutable() {
         return defaultCliExecutable;
     }
@@ -152,6 +184,14 @@ public enum ModelProviderType {
 
     public String getDefaultCliLoginArgs() {
         return defaultCliLoginArgs;
+    }
+
+    public String getDefaultCliLogoutArgs() {
+        return defaultCliLogoutArgs;
+    }
+
+    public String getCliInstallHint() {
+        return cliInstallHint;
     }
 
     public String getDefaultOAuthAuthorizeUrl() {

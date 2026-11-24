@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>io.github.obelisk121.trimodel</id>
     <name>Tri-Model AI Orchestrator</name>
-    <version>1.1.0</version>
+    <version>1.2.0</version>
     <vendor email="oabaiadze@gmail.com" url="https://github.com/Obelisk121/tri-model-orchestrator">Oto Abaiadze</vendor>
     <idea-version since-build="242"/>
 
@@ -22,6 +22,12 @@
     ]]></description>
 
     <change-notes><![CDATA[
+    <b>1.2.0</b>
+    <ul>
+      <li>Simplified sign-in and setup into a single one-screen <b>Sign In</b> dialog (all 3 models side-by-side: 1-click <b>Browser Sign-In</b> via official CLIs with zero Client ID needed, or paste an <b>API Key</b> with 1-click <b>Get Key</b> browser links).</li>
+      <li>Redesigned Settings tabs with a clean card layout showing only the active sign-in mode and collapsing advanced URL/OAuth/CLI fields out of the way.</li>
+      <li>Fixed macOS GUI PATH resolution so PyCharm automatically detects Homebrew and user-local <code>claude</code>, <code>codex</code>, and <code>gemini</code> CLIs, and updated official login commands (<code>claude auth login</code>, <code>codex login</code>, <code>gemini</code>).</li>
+    </ul>
     <b>1.1.0</b>
     <ul>
       <li>Added optional <b>Browser OAuth 2.0 (Temporary Session)</b> mode using RFC 8252 localhost loopback (<code>127.0.0.1</code>) and RFC 7636 PKCE (S256) in your default web browser, alongside existing API Key and Local CLI modes.</li>
