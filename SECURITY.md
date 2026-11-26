@@ -29,9 +29,10 @@
 
 | Version | Supported |
 | :--- | :--- |
-| `1.2.x` | Yes |
-| `1.1.x` | Security fixes via upgrade to `1.2.x` |
-| `1.0.x` | Security fixes via upgrade to `1.2.x` |
+| `1.3.x` | Yes |
+| `1.2.x` | Security fixes via upgrade to `1.3.x` |
+| `1.1.x` | Security fixes via upgrade to `1.3.x` |
+| `1.0.x` | Security fixes via upgrade to `1.3.x` |
 
 ## Reporting a Vulnerability
 

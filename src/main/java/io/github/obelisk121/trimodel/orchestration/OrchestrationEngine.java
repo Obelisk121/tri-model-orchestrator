@@ -1,5 +1,6 @@
 package io.github.obelisk121.trimodel.orchestration;
 
+import io.github.obelisk121.trimodel.model.AgentSkillConfig;
 import io.github.obelisk121.trimodel.model.ChatMessage;
 import io.github.obelisk121.trimodel.model.ContextAttachment;
 import io.github.obelisk121.trimodel.model.ModelProviderType;
@@ -30,11 +31,13 @@ import java.util.regex.Pattern;
 /**
  * Multi-model orchestration engine coordinating Claude, ChatGPT, and Gemini across
  * sequential pipelines, iterative dual-review loops, parallel councils, deep audits,
- * and side-by-side comparisons.
+ * and side-by-side comparisons — with anti-sycophancy, blind peer handoffs,
+ * topic-by-topic verification, and contradiction guards.
  */
 public final class OrchestrationEngine {
 
     private static final Pattern VERDICT_PATTERN = Pattern.compile("(?im)^\\s*VERDICT\\s*:\\s*(APPROVE|REVISE)\\b");
+    private static final Pattern UNRESOLVED_DEFECT_PATTERN = Pattern.compile("\\[(CRITICAL|MAJOR|DISPUTED)\\]");
 
     public record RunOptions(
             OrchestrationMode mode,
@@ -45,7 +48,8 @@ public final class OrchestrationEngine {
             boolean councilCrossCritique,
             int maxOutputTokens,
             int timeoutSeconds,
-            String customSystemInstructions
+            String customSystemInstructions,
+            AgentSkillConfig agentSkills
     ) {
         public RunOptions {
             mode = mode == null ? OrchestrationMode.PIPELINE : mode;
@@ -56,6 +60,25 @@ public final class OrchestrationEngine {
             maxOutputTokens = maxOutputTokens <= 0 ? 8192 : maxOutputTokens;
             timeoutSeconds = timeoutSeconds <= 0 ? 120 : timeoutSeconds;
             customSystemInstructions = customSystemInstructions == null ? "" : customSystemInstructions;
+            agentSkills = agentSkills == null
+                    ? AgentSkillConfig.forPreset(AgentSkillConfig.Preset.INDEPENDENT_PRECISE)
+                    : agentSkills.copy();
+        }
+
+        public RunOptions(
+                OrchestrationMode mode,
+                RoleAssignment roles,
+                List<ContextAttachment> attachments,
+                List<ChatMessage> history,
+                int maxReviewRounds,
+                boolean councilCrossCritique,
+                int maxOutputTokens,
+                int timeoutSeconds,
+                String customSystemInstructions
+        ) {
+            this(mode, roles, attachments, history, maxReviewRounds, councilCrossCritique,
+                    maxOutputTokens, timeoutSeconds, customSystemInstructions,
+                    AgentSkillConfig.forPreset(AgentSkillConfig.Preset.INDEPENDENT_PRECISE));
         }
     }
 
@@ -85,8 +108,8 @@ public final class OrchestrationEngine {
         }
 
         if (clients.isEmpty()) {
-            String err = "No AI models are configured and enabled. Open Settings -> Tools -> Tri-Model AI Orchestrator "
-                    + "to configure API keys or Local CLIs for Claude, ChatGPT, and Gemini.";
+            String err = "No AI models are configured and enabled. Open Sign In or Settings -> Tools -> Tri-Model AI Orchestrator "
+                    + "to connect Claude, ChatGPT, and Gemini.";
             cb.onFailed(err);
             return emptyError(options.mode(), userPrompt, err, 0);
         }
@@ -165,6 +188,7 @@ public final class OrchestrationEngine {
             BooleanSupplier cancel
     ) {
         RoleAssignment roles = options.roles();
+        AgentSkillConfig skills = options.agentSkills();
         ModelClient architect = resolveClient(roles.getArchitect(), "Architect", cb);
         ModelClient coder = resolveClient(roles.getCoder(), "Coder", cb);
         ModelClient reviewer = resolveClient(roles.getReviewer(), "Reviewer", cb);
@@ -174,9 +198,9 @@ public final class OrchestrationEngine {
         StageResult s1 = runStage(
                 "pipeline-1-architect",
                 "1. Architecture & Plan",
-                "Analyzes requirements & designs blueprint",
+                "Independently analyzes requirements & designs blueprint",
                 architect,
-                PromptTemplates.architectSystem(options.customSystemInstructions()),
+                PromptTemplates.architectSystem(skills, options.customSystemInstructions()),
                 basePromptWithContext,
                 options.history(),
                 options,
@@ -186,15 +210,17 @@ public final class OrchestrationEngine {
         );
         if (cancel.getAsBoolean()) return cancelledSummary(stages);
 
-        // Stage 2: Coder
+        // Stage 2: Coder (audits Architect's blueprint independently before coding)
+        String archLabel = peerLabel(s1.provider(), "Prior Agent (Architect)", skills);
         String coderPrompt = basePromptWithContext
-                + (s1.isSuccess() ? "\n\n## Architecture Blueprint (from " + s1.provider().getShortName() + ")\n" + s1.response().content() : "");
+                + (s1.isSuccess() ? "\n\n## Architecture Blueprint (from " + archLabel + " — treat as unverified until checked)\n"
+                + s1.response().content() : "");
         StageResult s2 = runStage(
                 "pipeline-2-coder",
-                "2. Implementation",
-                "Writes complete code following the blueprint",
+                "2. Independent Verification & Implementation",
+                "Audits blueprint topics & writes complete code",
                 coder,
-                PromptTemplates.coderSystem(options.customSystemInstructions()),
+                PromptTemplates.coderSystem(skills, s1.isSuccess(), options.customSystemInstructions()),
                 coderPrompt,
                 options.history(),
                 options,
@@ -209,18 +235,19 @@ public final class OrchestrationEngine {
                     : "Pipeline failed during Architecture and Implementation stages.";
         }
 
-        // Stage 3: Reviewer
+        // Stage 3: Independent Reviewer (blind peer labels when enabled)
+        String coderLabel = peerLabel(s2.provider(), "Prior Agent (Coder)", skills);
         String reviewPrompt = "## Original Developer Request\n" + rawPrompt + "\n\n"
                 + PromptTemplates.buildContextBlock(options.attachments())
-                + (s1.isSuccess() ? "\n## Architecture Blueprint\n" + s1.response().content() + "\n" : "")
-                + "\n## Proposed Implementation (from " + s2.provider().getShortName() + ")\n"
+                + (s1.isSuccess() ? "\n## Architecture Blueprint (" + archLabel + ")\n" + s1.response().content() + "\n" : "")
+                + "\n## Proposed Implementation (" + coderLabel + ")\n"
                 + s2.response().content();
         StageResult s3 = runStage(
                 "pipeline-3-reviewer",
-                "3. Independent Code Review",
-                "Audits bugs, edge cases, security & style",
+                "3. Independent Adversarial Review",
+                "Audits every topic for bugs, edge cases, security & precision",
                 reviewer,
-                PromptTemplates.reviewerSystem(options.customSystemInstructions()),
+                PromptTemplates.reviewerSystem(skills, options.customSystemInstructions()),
                 reviewPrompt,
                 List.of(),
                 options,
@@ -230,18 +257,19 @@ public final class OrchestrationEngine {
         );
         if (cancel.getAsBoolean()) return cancelledSummary(stages);
 
-        // Stage 4: Finalizer
+        // Stage 4: Independent Finalizer / Arbiter
+        String reviewerLabel = peerLabel(s3.provider(), "Prior Agent (Reviewer)", skills);
         String finalizerPrompt = "## Original Developer Request\n" + rawPrompt + "\n\n"
                 + PromptTemplates.buildContextBlock(options.attachments())
-                + (s1.isSuccess() ? "\n## Architecture Blueprint (" + s1.provider().getShortName() + ")\n" + s1.response().content() + "\n" : "")
-                + "\n## Implementation (" + s2.provider().getShortName() + ")\n" + s2.response().content() + "\n"
-                + (s3.isSuccess() ? "\n## Independent Review (" + s3.provider().getShortName() + ")\n" + s3.response().content() : "");
+                + (s1.isSuccess() ? "\n## Architecture Blueprint (" + archLabel + ")\n" + s1.response().content() + "\n" : "")
+                + "\n## Implementation (" + coderLabel + ")\n" + s2.response().content() + "\n"
+                + (s3.isSuccess() ? "\n## Independent Review (" + reviewerLabel + ")\n" + s3.response().content() : "");
         StageResult s4 = runStage(
                 "pipeline-4-finalizer",
-                "4. Final Synthesis & Code",
-                "Integrates review fixes into production output",
+                "4. Final Adjudication & Verified Code",
+                "Independently resolves disagreements & produces final code",
                 finalizer,
-                PromptTemplates.finalizerSystem(options.customSystemInstructions()),
+                PromptTemplates.finalizerSystem(skills, options.customSystemInstructions()),
                 finalizerPrompt,
                 List.of(),
                 options,
@@ -262,6 +290,7 @@ public final class OrchestrationEngine {
             BooleanSupplier cancel,
             ExecutorService pool
     ) {
+        AgentSkillConfig skills = options.agentSkills();
         ModelClient coder = resolveClient(options.roles().getCoder(), "Coder", cb);
         List<ModelClient> reviewers = pickReviewersExcluding(coder.getProviderType(), cb);
 
@@ -271,7 +300,7 @@ public final class OrchestrationEngine {
                 "Round 1: Implementation",
                 "Initial code authoring",
                 coder,
-                PromptTemplates.coderSystem(options.customSystemInstructions()),
+                PromptTemplates.coderSystem(skills, false, options.customSystemInstructions()),
                 basePromptWithContext,
                 options.history(),
                 options,
@@ -292,25 +321,25 @@ public final class OrchestrationEngine {
             final int currentRound = round;
             final String codeSnapshot = currentCode;
 
-            // Parallel dual review by the other two models
+            // Parallel dual review by the other two models (blind to each other and to model brand)
             List<CompletableFuture<StageResult>> reviewFutures = new ArrayList<>();
             for (int idx = 0; idx < reviewers.size(); idx++) {
                 ModelClient revClient = reviewers.get(idx);
                 String focus = (idx == 0)
-                        ? "Functional Correctness, Edge Cases, Typing & Tests"
-                        : "Security, Concurrency, Error Handling, Architecture & Performance";
+                        ? "Functional Correctness, Boundary Conditions, Edge Cases, Typing & Tests"
+                        : "Security, Concurrency, Error Handling, Architecture & Algorithmic Performance";
                 String stageId = "loop-r" + currentRound + "-review-" + (idx + 1);
-                String stageName = "Round " + currentRound + ": Review (" + (idx == 0 ? "Correctness" : "Security & Arch") + ")";
+                String stageName = "Round " + currentRound + ": Independent Review (" + (idx == 0 ? "Correctness" : "Security & Arch") + ")";
                 String reviewInput = "## Developer Request\n" + rawPrompt + "\n\n"
                         + PromptTemplates.buildContextBlock(options.attachments())
-                        + "\n## Code Under Review (Round " + currentRound + ")\n" + codeSnapshot;
+                        + "\n## Implementation Under Review (Round " + currentRound + ")\n" + codeSnapshot;
 
                 reviewFutures.add(CompletableFuture.supplyAsync(() -> runStage(
                         stageId,
                         stageName,
                         focus,
                         revClient,
-                        PromptTemplates.dualReviewerSystem(focus, options.customSystemInstructions()),
+                        PromptTemplates.dualReviewerSystem(focus, skills, options.customSystemInstructions()),
                         reviewInput,
                         List.of(),
                         options,
@@ -327,18 +356,28 @@ public final class OrchestrationEngine {
 
             if (cancel.getAsBoolean()) return cancelledSummary(stages);
 
-            boolean needsRevision = roundReviews.stream()
-                    .anyMatch(r -> r.isSuccess() && "REVISE".equalsIgnoreCase(r.verdict()));
+            boolean needsRevision = false;
+            for (StageResult r : roundReviews) {
+                if (!r.isSuccess()) continue;
+                if ("REVISE".equalsIgnoreCase(r.verdict())) {
+                    needsRevision = true;
+                } else if (skills.noBlindAgreement && hasUnresolvedDefects(r.response().content())) {
+                    // Anti-rubber-stamp guard: reviewer flagged CRITICAL/MAJOR/DISPUTED defects yet wrote APPROVE
+                    needsRevision = true;
+                    cb.onLog("Anti-sycophancy guard: " + r.provider().getShortName()
+                            + " flagged [CRITICAL]/[MAJOR]/[DISPUTED] findings despite APPROVE — enforcing refinement pass.");
+                }
+            }
 
             if (!needsRevision) {
-                cb.onLog("Reviewers approved implementation after Round " + round + ".");
+                cb.onLog("All independent reviewers verified and approved implementation after Round " + round + ".");
                 return buildApprovedLoopSummary(currentCode, roundReviews, round);
             }
 
             if (round >= maxRounds) {
                 cb.onLog("Reached max review rounds (" + maxRounds + "); performing final refinement pass.");
             } else {
-                cb.onLog("Reviewers requested revisions in Round " + round + "; refining code...");
+                cb.onLog("Independent reviewers flagged issues in Round " + round + "; running refinement...");
             }
 
             StringBuilder refinePrompt = new StringBuilder();
@@ -346,21 +385,23 @@ public final class OrchestrationEngine {
             refinePrompt.append(PromptTemplates.buildContextBlock(options.attachments()));
             refinePrompt.append("\n## Your Previous Implementation (Round ").append(round).append(")\n")
                     .append(currentCode).append("\n\n");
-            refinePrompt.append("## Peer Reviews To Address\n");
-            for (StageResult r : roundReviews) {
+            refinePrompt.append("## Independent Peer Reviews (Evaluate Each Finding Critically — Accept Valid Fixes, Reject False Positives)\n");
+            for (int rIdx = 0; rIdx < roundReviews.size(); rIdx++) {
+                StageResult r = roundReviews.get(rIdx);
                 if (r.isSuccess()) {
+                    String revLabel = peerLabel(r.provider(), "Peer Reviewer " + (rIdx + 1), skills);
                     refinePrompt.append("### ").append(r.stageName())
-                            .append(" [").append(r.provider().getShortName()).append(" - ").append(r.verdict()).append("]\n")
+                            .append(" [").append(revLabel).append(" - ").append(r.verdict()).append("]\n")
                             .append(r.response().content()).append("\n\n");
                 }
             }
 
             StageResult refined = runStage(
                     "loop-r" + (round + 1) + "-refine",
-                    "Round " + (round + 1) + ": Refinement",
-                    "Applies dual-reviewer feedback",
+                    "Round " + (round + 1) + ": Critical Refinement",
+                    "Independently adjudicates & fixes dual-reviewer findings",
                     coder,
-                    PromptTemplates.coderRefinementSystem(options.customSystemInstructions()),
+                    PromptTemplates.coderRefinementSystem(skills, options.customSystemInstructions()),
                     refinePrompt.toString(),
                     List.of(),
                     options,
@@ -385,17 +426,18 @@ public final class OrchestrationEngine {
             BooleanSupplier cancel,
             ExecutorService pool
     ) {
+        AgentSkillConfig skills = options.agentSkills();
         List<ModelClient> members = new ArrayList<>(clients.values());
 
-        // Round 1: All configured models answer independently in parallel
+        // Round 1: All configured models answer strictly independently in parallel
         List<CompletableFuture<StageResult>> round1Futures = new ArrayList<>();
         for (ModelClient client : members) {
             round1Futures.add(CompletableFuture.supplyAsync(() -> runStage(
                     "council-r1-" + client.getProviderType().name().toLowerCase(),
                     "Council Proposal: " + client.getProviderType().getShortName(),
-                    "Independent proposal",
+                    "Independent first-principles proposal",
                     client,
-                    PromptTemplates.councilMemberSystem(client.getProviderType().getFullName(), options.customSystemInstructions()),
+                    PromptTemplates.councilMemberSystem(client.getProviderType().getFullName(), skills, options.customSystemInstructions()),
                     basePromptWithContext,
                     options.history(),
                     options,
@@ -415,10 +457,13 @@ public final class OrchestrationEngine {
 
         long successfulProposals = proposals.values().stream().filter(StageResult::isSuccess).count();
         if (successfulProposals == 0) {
-            return "All council models failed. Check the Timeline tab and Settings -> Test Connection.";
+            return "All council models failed. Check the Timeline tab and Sign In / Settings -> Test Connection.";
         }
 
-        // Round 2 (optional): Parallel Cross-Critique when at least 2 models succeeded
+        // Assign stable blind labels (Proposal A, Proposal B, Proposal C) across Round 2 & Round 3
+        Map<ModelProviderType, String> blindAliases = assignBlindAliases(proposals.keySet(), "Proposal");
+
+        // Round 2 (optional): Parallel Adversarial Cross-Critique with anonymized peer labels
         Map<ModelProviderType, StageResult> critiques = new LinkedHashMap<>();
         if (options.councilCrossCritique() && successfulProposals >= 2) {
             List<CompletableFuture<StageResult>> round2Futures = new ArrayList<>();
@@ -428,21 +473,25 @@ public final class OrchestrationEngine {
 
                 StringBuilder peerBundle = new StringBuilder();
                 peerBundle.append("## Original Developer Request\n").append(rawPrompt).append("\n\n");
-                peerBundle.append("## Your Initial Proposal\n").append(own.response().content()).append("\n\n");
-                peerBundle.append("## Peer Proposals to Critique\n");
+                peerBundle.append(PromptTemplates.buildContextBlock(options.attachments())).append("\n");
+                peerBundle.append("## Your Initial Proposal (")
+                        .append(peerLabel(client.getProviderType(), blindAliases.get(client.getProviderType()), skills))
+                        .append(")\n").append(own.response().content()).append("\n\n");
+                peerBundle.append("## Independent Peer Proposals to Scrutinize Topic-by-Topic\n");
                 for (StageResult other : proposals.values()) {
                     if (other.provider() != client.getProviderType() && other.isSuccess()) {
-                        peerBundle.append("### ").append(other.provider().getFullName()).append("\n")
+                        String otherLabel = peerLabel(other.provider(), blindAliases.get(other.provider()), skills);
+                        peerBundle.append("### ").append(otherLabel).append("\n")
                                 .append(other.response().content()).append("\n\n");
                     }
                 }
 
                 round2Futures.add(CompletableFuture.supplyAsync(() -> runStage(
                         "council-r2-" + client.getProviderType().name().toLowerCase(),
-                        "Cross-Critique: " + client.getProviderType().getShortName(),
-                        "Evaluates peer proposals & spots flaws",
+                        "Adversarial Critique: " + client.getProviderType().getShortName(),
+                        "Audits each peer topic independently & challenges flaws",
                         client,
-                        PromptTemplates.councilCritiqueSystem(client.getProviderType().getFullName(), options.customSystemInstructions()),
+                        PromptTemplates.councilCritiqueSystem(client.getProviderType().getFullName(), skills, options.customSystemInstructions()),
                         peerBundle.toString(),
                         List.of(),
                         options,
@@ -459,7 +508,7 @@ public final class OrchestrationEngine {
 
         if (cancel.getAsBoolean()) return cancelledSummary(stages);
 
-        // Round 3: Chair Synthesis
+        // Round 3: Chair Adjudication (blind labels when enabled)
         ModelClient chair = resolveClient(options.roles().getSynthesizer(), "Council Chair", cb);
         StringBuilder synthesisInput = new StringBuilder();
         synthesisInput.append("## Original Developer Request\n").append(rawPrompt).append("\n\n");
@@ -467,16 +516,21 @@ public final class OrchestrationEngine {
         synthesisInput.append("## Round 1 Independent Proposals\n");
         for (StageResult prop : proposals.values()) {
             if (prop.isSuccess()) {
-                synthesisInput.append("### ").append(prop.provider().getFullName())
-                        .append(" (").append(prop.modelId()).append(")\n")
+                String label = skills.anonymizedBlindReview
+                        ? blindAliases.get(prop.provider())
+                        : prop.provider().getFullName() + " (" + prop.modelId() + ")";
+                synthesisInput.append("### ").append(label).append("\n")
                         .append(prop.response().content()).append("\n\n");
             }
         }
         if (!critiques.isEmpty()) {
-            synthesisInput.append("## Round 2 Cross-Critiques\n");
+            synthesisInput.append("## Round 2 Independent Cross-Critiques\n");
             for (StageResult crit : critiques.values()) {
                 if (crit.isSuccess()) {
-                    synthesisInput.append("### Critique by ").append(crit.provider().getFullName()).append("\n")
+                    String label = skills.anonymizedBlindReview
+                            ? "Critique by Author of " + blindAliases.get(crit.provider())
+                            : "Critique by " + crit.provider().getFullName();
+                    synthesisInput.append("### ").append(label).append("\n")
                             .append(crit.response().content()).append("\n\n");
                 }
             }
@@ -484,10 +538,10 @@ public final class OrchestrationEngine {
 
         StageResult chairStage = runStage(
                 "council-r3-chair",
-                "Chair Synthesis (" + chair.getProviderType().getShortName() + ")",
-                "Produces unified consensus solution & code",
+                "Chair Adjudication (" + chair.getProviderType().getShortName() + ")",
+                "Adjudicates every contested topic & builds verified code",
                 chair,
-                PromptTemplates.councilChairSystem(options.customSystemInstructions()),
+                PromptTemplates.councilChairSystem(skills, options.customSystemInstructions()),
                 synthesisInput.toString(),
                 List.of(),
                 options,
@@ -499,7 +553,6 @@ public final class OrchestrationEngine {
         if (chairStage.isSuccess()) {
             return chairStage.response().content();
         }
-        // Fallback to first successful proposal
         return proposals.values().stream()
                 .filter(StageResult::isSuccess)
                 .map(s -> s.response().content())
@@ -516,12 +569,13 @@ public final class OrchestrationEngine {
             BooleanSupplier cancel,
             ExecutorService pool
     ) {
+        AgentSkillConfig skills = options.agentSkills();
         List<ModelClient> active = new ArrayList<>(clients.values());
         String[][] lenses = new String[][]{
                 {
                         "Correctness, Bugs & Type Safety",
-                        "- Logic bugs, edge cases, None/null hazards, off-by-one errors\n"
-                                + "- Type safety, schema/API mismatches, broken invariants\n"
+                        "- Logic bugs, boundary conditions, None/null hazards, off-by-one errors\n"
+                                + "- Type safety, schema/API contract mismatches, broken invariants\n"
                                 + "- Subtle Python/runtime pitfalls (mutable defaults, late binding, encoding)"
                 },
                 {
@@ -550,7 +604,7 @@ public final class OrchestrationEngine {
                     "Audit: " + lensTitle,
                     lensTitle,
                     assigned,
-                    PromptTemplates.deepAuditLensSystem(lensTitle, lensChecks, options.customSystemInstructions()),
+                    PromptTemplates.deepAuditLensSystem(lensTitle, lensChecks, skills, options.customSystemInstructions()),
                     basePromptWithContext,
                     options.history(),
                     options,
@@ -571,21 +625,23 @@ public final class OrchestrationEngine {
         StringBuilder synthPrompt = new StringBuilder();
         synthPrompt.append("## Analysis Request\n").append(rawPrompt).append("\n\n");
         synthPrompt.append(PromptTemplates.buildContextBlock(options.attachments())).append("\n");
-        synthPrompt.append("## Independent Audits\n");
-        for (StageResult a : audits) {
+        synthPrompt.append("## Independent Audits to Cross-Verify Against the Source Code\n");
+        for (int idx = 0; idx < audits.size(); idx++) {
+            StageResult a = audits.get(idx);
             if (a.isSuccess()) {
+                String auditorLabel = peerLabel(a.provider(), "Independent Auditor " + (char) ('A' + idx), skills);
                 synthPrompt.append("### ").append(a.stageName())
-                        .append(" [").append(a.provider().getFullName()).append("]\n")
+                        .append(" [").append(auditorLabel).append("]\n")
                         .append(a.response().content()).append("\n\n");
             }
         }
 
         StageResult report = runStage(
                 "audit-synthesis",
-                "Unified Tri-Model Audit Report",
-                "Deduplicates & prioritizes findings across all 3 models",
+                "Verified Tri-Model Audit Report",
+                "Cross-checks auditor claims, filters false positives & prioritizes fixes",
                 synth,
-                PromptTemplates.deepAuditSynthesizerSystem(options.customSystemInstructions()),
+                PromptTemplates.deepAuditSynthesizerSystem(skills, options.customSystemInstructions()),
                 synthPrompt.toString(),
                 List.of(),
                 options,
@@ -615,14 +671,15 @@ public final class OrchestrationEngine {
             BooleanSupplier cancel,
             ExecutorService pool
     ) {
+        AgentSkillConfig skills = options.agentSkills();
         List<CompletableFuture<StageResult>> futures = new ArrayList<>();
         for (ModelClient client : clients.values()) {
             futures.add(CompletableFuture.supplyAsync(() -> runStage(
                     "compare-" + client.getProviderType().name().toLowerCase(),
                     client.getProviderType().getFullName(),
-                    "Parallel direct response",
+                    "Parallel independent response",
                     client,
-                    PromptTemplates.directCompareSystem(options.customSystemInstructions()),
+                    PromptTemplates.directCompareSystem(skills, options.customSystemInstructions()),
                     basePromptWithContext,
                     options.history(),
                     options,
@@ -699,6 +756,33 @@ public final class OrchestrationEngine {
         return result;
     }
 
+    private static String peerLabel(ModelProviderType provider, String blindAlias, AgentSkillConfig skills) {
+        if (skills != null && skills.anonymizedBlindReview) {
+            return blindAlias;
+        }
+        return provider.getFullName();
+    }
+
+    private static Map<ModelProviderType, String> assignBlindAliases(
+            Iterable<ModelProviderType> providers,
+            String prefix
+    ) {
+        Map<ModelProviderType, String> map = new EnumMap<>(ModelProviderType.class);
+        char letter = 'A';
+        for (ModelProviderType p : providers) {
+            map.put(p, prefix + " " + letter);
+            letter++;
+        }
+        return map;
+    }
+
+    public static boolean hasUnresolvedDefects(String content) {
+        if (content == null || content.isBlank()) {
+            return false;
+        }
+        return UNRESOLVED_DEFECT_PATTERN.matcher(content).find();
+    }
+
     private ModelClient resolveClient(ModelProviderType preferred, String roleName, OrchestrationListener cb) {
         ModelClient direct = clients.get(preferred);
         if (direct != null) {
@@ -730,7 +814,6 @@ public final class OrchestrationEngine {
         if (!primary.isEmpty()) {
             return primary;
         }
-        // Fallback: check stages in reverse chronological order for code blocks
         for (int i = stages.size() - 1; i >= 0; i--) {
             StageResult sr = stages.get(i);
             if (sr.isSuccess()) {
@@ -765,7 +848,7 @@ public final class OrchestrationEngine {
 
     private static String buildApprovedLoopSummary(String code, List<StageResult> reviews, int round) {
         StringBuilder sb = new StringBuilder();
-        sb.append("> **Consensus Reached in Round ").append(round).append(":** All reviewers approved the implementation.\n\n");
+        sb.append("> **Consensus Reached in Round ").append(round).append(":** All independent reviewers verified and approved the implementation.\n\n");
         sb.append(code).append("\n\n---\n\n### Reviewer Sign-Off Notes\n");
         for (StageResult r : reviews) {
             if (r.isSuccess()) {

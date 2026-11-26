@@ -5,6 +5,7 @@ import com.google.gson.JsonParser;
 import io.github.obelisk121.trimodel.auth.OAuthPkceService;
 import io.github.obelisk121.trimodel.auth.OAuthSessionStore;
 import io.github.obelisk121.trimodel.auth.OAuthToken;
+import io.github.obelisk121.trimodel.model.AgentSkillConfig;
 import io.github.obelisk121.trimodel.model.ChatMessage;
 import io.github.obelisk121.trimodel.model.ConnectionMode;
 import io.github.obelisk121.trimodel.model.ContextAttachment;
@@ -20,6 +21,7 @@ import io.github.obelisk121.trimodel.model.ProposedFileChange;
 import io.github.obelisk121.trimodel.model.RoleAssignment;
 import io.github.obelisk121.trimodel.orchestration.CodeChangeExtractor;
 import io.github.obelisk121.trimodel.orchestration.OrchestrationEngine;
+import io.github.obelisk121.trimodel.orchestration.PromptTemplates;
 import io.github.obelisk121.trimodel.provider.ChatGptClient;
 import io.github.obelisk121.trimodel.provider.ClaudeClient;
 import io.github.obelisk121.trimodel.provider.CliModelClient;
@@ -62,6 +64,7 @@ public final class TriModelPluginTestSuite {
         runTest("MarkdownHtmlRenderer (tables, code blocks, badges, HTML escaping)", TriModelPluginTestSuite::testMarkdownRenderer);
         runTest("OAuth 2.0 PKCE (S256, auth URL, CSRF state, code exchange, temporary session & refresh)", TriModelPluginTestSuite::testOAuthPkceFlow);
         runTest("Bearer OAuth headers on ClaudeClient & GeminiClient", TriModelPluginTestSuite::testOAuthBearerHeaders);
+        runTest("Agent Independence Skills (anti-sycophancy, topic matrix, blind peer labels, contradiction guard)", TriModelPluginTestSuite::testAgentIndependenceSkills);
 
         System.out.println();
         System.out.printf("Results: %d passed, %d failed%n", passed, failed);
@@ -618,6 +621,81 @@ public final class TriModelPluginTestSuite {
         assertTrue(gRes.success(), "Gemini Bearer OAuth call succeeded");
         assertEquals("Bearer ya29.oauth-gem", geminiHeaders.get().get("Authorization"), "Gemini Bearer header set");
         assertTrue(!geminiHeaders.get().containsKey("x-goog-api-key"), "Gemini x-goog-api-key omitted in Bearer mode");
+    }
+
+    private static void testAgentIndependenceSkills() {
+        // 1. Prompt skill directive generation across presets
+        AgentSkillConfig strict = AgentSkillConfig.forPreset(AgentSkillConfig.Preset.STRICT_ADVERSARIAL);
+        String strictPeerPrompt = PromptTemplates.reviewerSystem(strict, "");
+        assertTrue(strictPeerPrompt.contains("ANTI-SYCOPHANCY"), "Anti-sycophancy skill injected");
+        assertTrue(strictPeerPrompt.contains("TOPIC-BY-TOPIC PEER ANALYSIS"), "Topic-by-topic verification matrix injected");
+        assertTrue(strictPeerPrompt.contains("[DISPUTED]"), "Structured [DISPUTED] status tag required");
+        assertTrue(strictPeerPrompt.contains("HIGH-PRECISION DETAIL"), "Detail precision skill injected");
+        assertTrue(strictPeerPrompt.contains("DEVIL'S ADVOCATE"), "Devil's Advocate skill injected in STRICT_ADVERSARIAL");
+
+        AgentSkillConfig balanced = AgentSkillConfig.forPreset(AgentSkillConfig.Preset.BALANCED);
+        String balancedPeerPrompt = PromptTemplates.reviewerSystem(balanced, "");
+        assertTrue(!balancedPeerPrompt.contains("ANTI-SYCOPHANCY"), "Balanced preset omits strict adversarial block");
+        assertTrue(balancedPeerPrompt.contains("HIGH-PRECISION DETAIL"), "Balanced preset still retains detail precision");
+
+        // 2. Blind peer labeling in Parallel Council Cross-Critique (no model brand names leaked!)
+        AtomicReference<String> critiquePromptSeen = new AtomicReference<>();
+        Map<ModelProviderType, ModelClient> councilMocks = new EnumMap<>(ModelProviderType.class);
+        councilMocks.put(ModelProviderType.CLAUDE, stub(ModelProviderType.CLAUDE, req -> {
+            if (req.systemPrompt().contains("Cross-Critique")) {
+                critiquePromptSeen.set(req.userPrompt());
+                return "| Topic | Status | Analysis |\n| :--- | :--- | :--- |\n| Design | [DISPUTED] | Needs lock |";
+            }
+            return "Proposal content alpha";
+        }));
+        councilMocks.put(ModelProviderType.CHATGPT, stub(ModelProviderType.CHATGPT, req -> "Proposal content beta"));
+        councilMocks.put(ModelProviderType.GEMINI, stub(ModelProviderType.GEMINI, req -> "Proposal content gamma"));
+
+        OrchestrationEngine councilEngine = new OrchestrationEngine(councilMocks);
+        OrchestrationEngine.RunOptions blindOpts = new OrchestrationEngine.RunOptions(
+                OrchestrationMode.PARALLEL_COUNCIL,
+                new RoleAssignment(),
+                List.of(), List.of(), 2, true, 4096, 30, "",
+                AgentSkillConfig.forPreset(AgentSkillConfig.Preset.INDEPENDENT_PRECISE)
+        );
+        councilEngine.execute("Design thread-safe queue", blindOpts, OrchestrationListener.NO_OP, () -> false);
+        String seen = critiquePromptSeen.get();
+        assertTrue(seen != null && seen.contains("Proposal B"), "Blind peer alias used in cross-critique");
+        assertTrue(!seen.contains("OpenAI ChatGPT") && !seen.contains("Google Gemini"),
+                "Peer brand names anonymized in blind review mode");
+
+        // 3. Anti-rubber-stamp contradiction guard: reviewer says APPROVE while flagging [DISPUTED]/[MAJOR]
+        AtomicInteger coderRuns = new AtomicInteger(0);
+        AtomicInteger reviewerRuns = new AtomicInteger(0);
+        Map<ModelProviderType, ModelClient> guardMocks = new EnumMap<>(ModelProviderType.class);
+        guardMocks.put(ModelProviderType.CLAUDE, stub(ModelProviderType.CLAUDE, req -> {
+            int n = coderRuns.incrementAndGet();
+            return "### FILE: svc.py\n```python\ndef run(x):\n    return " + (n == 1 ? "x" : "x or 0") + "\n```";
+        }));
+        guardMocks.put(ModelProviderType.CHATGPT, stub(ModelProviderType.CHATGPT, req -> {
+            int n = reviewerRuns.incrementAndGet();
+            return n == 1
+                    ? "| Topic | Status | Note |\n| :--- | :--- | :--- |\n| None check | [DISPUTED] | Missing None guard |\nVERDICT: APPROVE"
+                    : "| Topic | Status | Note |\n| :--- | :--- | :--- |\n| None check | [VERIFIED] | Guard present |\nVERDICT: APPROVE";
+        }));
+        guardMocks.put(ModelProviderType.GEMINI, stub(ModelProviderType.GEMINI, req -> "All topics [VERIFIED].\nVERDICT: APPROVE"));
+
+        OrchestrationEngine guardEngine = new OrchestrationEngine(guardMocks);
+        OrchestrationEngine.RunOptions guardOpts = new OrchestrationEngine.RunOptions(
+                OrchestrationMode.ITERATIVE_LOOP,
+                new RoleAssignment(ModelProviderType.GEMINI, ModelProviderType.CLAUDE, ModelProviderType.CHATGPT, ModelProviderType.CLAUDE),
+                List.of(), List.of(), 2, true, 4096, 30, "",
+                AgentSkillConfig.forPreset(AgentSkillConfig.Preset.INDEPENDENT_PRECISE)
+        );
+        OrchestrationResult guardRes = guardEngine.execute("Handle None safely", guardOpts, OrchestrationListener.NO_OP, () -> false);
+        assertEquals(2, coderRuns.get(), "Contradiction guard forced refinement despite rubber-stamp APPROVE");
+        assertTrue(guardRes.finalOutput().contains("Consensus Reached in Round 2"), "Second round verified cleanly");
+
+        // 4. Markdown badge rendering for verification tags
+        String badgeHtml = MarkdownHtmlRenderer.toHtmlDocument("[VERIFIED] [DISPUTED] [MISSING] [UNPROVEN] [ACCEPTED] [REJECTED]", true);
+        assertTrue(badgeHtml.contains("badge-ok") && badgeHtml.contains("badge-crit")
+                && badgeHtml.contains("badge-high") && badgeHtml.contains("badge-med"),
+                "Verification status badges rendered");
     }
 
     private static ModelClient stub(ModelProviderType type, java.util.function.Function<ModelRequest, String> fn) {

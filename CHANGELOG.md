@@ -4,6 +4,18 @@ All notable changes to **Tri-Model AI Orchestrator** are documented in this file
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-11-26
+
+### Added
+- **Independent Verification & Anti-Sycophancy Agent Skills (`AgentSkill` & `AgentSkillConfig`):**
+  - **Anti-Sycophancy (No Blind Agreement):** Forbids rubber-stamping or deferential filler; forces every agent to treat peer plans, code, and critiques as unverified hypotheses and rebut false positives with proof.
+  - **Topic-by-Topic Peer Analysis:** Requires a structured Markdown verification table auditing every distinct topic raised by prior agents (`[VERIFIED]`, `[DISPUTED]`, `[MISSING]`, `[UNPROVEN]`), rendered with color-coded badges in the Tool Window.
+  - **High-Precision Detail & Evidence:** Bans vague generalizations and enforces exact file paths, symbol names, types, boundary values, exception classes, and complexity analysis.
+  - **Blind Peer Labels (De-Biased Handoff):** Anonymizes peer model brand names (`Proposal A`, `Prior Agent (Coder)`, `Independent Auditor B`) inside handoff prompts so agents judge purely on technical merit without brand bias.
+  - **Devil's Advocate Stress-Testing (`Strict Adversarial` profile):** Instructs agents to construct concrete breaking inputs and step-by-step adversarial failure traces.
+- **Engine-Level Contradiction Guard:** Automatically overrides a rubber-stamp `VERDICT: APPROVE` to `REVISE` in Iterative Loop mode if the reviewer still flagged `[CRITICAL]`, `[MAJOR]`, or `[DISPUTED]` defects.
+- **Tool Window & Settings Controls:** Added an **Agent Skills** preset selector (`Independent & Precise`, `Strict Adversarial`, `Balanced`, `Custom`) directly in the Tool Window header and granular per-skill checkboxes in **Settings → Tools → Tri-Model AI Orchestrator → Orchestration & Defaults**.
+
 ## [1.2.1] - 2026-11-24
 
 ### Fixed

@@ -20,7 +20,7 @@ Orchestrate **Claude**, **ChatGPT**, and **Gemini** together inside **PyCharm** 
 2. Open **PyCharm**.
 3. Go to **Settings / Preferences** (`Cmd + ,` on macOS, `Ctrl + Alt + S` on Windows/Linux) → **Plugins**.
 4. Click the **gear icon (⚙)** at the top right of the Plugins pane and select **Install Plugin from Disk...**.
-5. Select the downloaded `tri-model-orchestrator-1.2.1.zip` file and click **OK**.
+5. Select the downloaded `tri-model-orchestrator-1.3.0.zip` file and click **OK**.
 6. Restart PyCharm when prompted.
 7. Open the **Tri-Model AI** tool window on the right sidebar (or right-click inside any editor → **Tri-Model AI**).
 
@@ -41,13 +41,13 @@ cd tri-model-orchestrator
 ```bash
 ./scripts/build-plugin.sh
 ```
-This compiles against your installed `/Applications/PyCharm.app` (set `PYCHARM_APP=/path/to/PyCharm.app` if installed elsewhere), runs the full 14-test suite, runs JetBrains Marketplace compliance checks, and generates `build/distributions/tri-model-orchestrator-1.2.1.zip`.
+This compiles against your installed `/Applications/PyCharm.app` (set `PYCHARM_APP=/path/to/PyCharm.app` if installed elsewhere), runs the full 15-test suite, runs JetBrains Marketplace compliance checks, and generates `build/distributions/tri-model-orchestrator-1.3.0.zip`.
 
 **Standard Gradle build (cross-platform, IntelliJ Platform Gradle Plugin 2.x):**
 ```bash
 gradle buildPlugin verifyPlugin
 ```
-Then install `build/distributions/tri-model-orchestrator-1.2.1.zip` via **Settings → Plugins → ⚙ → Install Plugin from Disk...**.
+Then install `build/distributions/tri-model-orchestrator-1.3.0.zip` via **Settings → Plugins → ⚙ → Install Plugin from Disk...**.
 
 ### Option 4: Private / Enterprise Custom Plugin Repository
 
@@ -56,8 +56,8 @@ Organizations hosting an internal JetBrains plugin repository can serve the rele
 ```xml
 <plugins>
   <plugin id="io.github.obelisk121.trimodel"
-          url="https://internal.example.com/plugins/tri-model-orchestrator-1.2.1.zip"
-          version="1.2.1">
+          url="https://internal.example.com/plugins/tri-model-orchestrator-1.3.0.zip"
+          version="1.3.0">
     <idea-version since-build="242"/>
     <name>Tri-Model AI Orchestrator</name>
   </plugin>
@@ -87,6 +87,19 @@ Click **`Sign In`** in the top bar of the **Tri-Model AI** tool window (or click
 
 ### Option C (Advanced): Custom Base URLs & Custom OAuth 2.0 (PKCE)
 Open **Settings → Tools → Tri-Model AI Orchestrator** to expand **Advanced** options for custom proxy URLs, OpenAI/Gemini API styles, or **Custom OAuth 2.0 (Own Client ID / Enterprise SSO)** with RFC 8252 `127.0.0.1` loopback PKCE and temporary RAM-only sessions.
+
+---
+
+## Independent Verification & Anti-Sycophancy Agent Skills
+
+By default (**`Independent & Precise`** profile, switchable directly in the Tool Window header or customized in **Settings → Tools → Tri-Model AI Orchestrator → Orchestration & Defaults**), every agent follows strict anti-sycophancy and detail-precision skills so models do not blindly agree with each other:
+
+- **Anti-Sycophancy (No Blind Agreement):** Treats every peer agent's blueprint, code, and critique as an unverified hypothesis; forbids deferential praise without proof and requires rebutting false positives rather than blindly obeying invalid critiques.
+- **Topic-by-Topic Peer Analysis:** Requires a structured verification matrix rating every distinct peer topic as `[VERIFIED]`, `[DISPUTED]`, `[MISSING]`, or `[UNPROVEN]` with concrete evidence.
+- **High-Precision Detail & Evidence:** Requires exact file paths, symbol names, types, boundary inputs, exception classes, and complexity instead of vague advice.
+- **Blind Peer Labels:** Hides model brand names (`Claude`, `ChatGPT`, `Gemini`) inside peer handoff prompts (`Proposal A`, `Prior Agent (Coder)`, `Independent Auditor B`) to eliminate brand/authority bias while preserving full model attribution in the PyCharm Timeline UI.
+- **Devil's Advocate Stress-Testing (`Strict Adversarial` profile):** Actively builds concrete breaking inputs and traces failure sequences before accepting any peer solution.
+- **Contradiction Guard:** In Iterative Loop mode, if a reviewer writes `VERDICT: APPROVE` while still flagging `[CRITICAL]`, `[MAJOR]`, or `[DISPUTED]` defects, the engine automatically enforces a refinement round.
 
 ---
 

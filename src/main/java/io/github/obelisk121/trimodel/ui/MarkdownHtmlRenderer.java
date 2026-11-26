@@ -243,14 +243,20 @@ public final class MarkdownHtmlRenderer {
         String formatted = BOLD.matcher(afterCode.toString()).replaceAll("<b>$1</b>");
         formatted = ITALIC.matcher(formatted).replaceAll("<i>$1</i>");
 
-        // Severity & verdict badges
+        // Severity, verification-matrix & verdict badges
         formatted = formatted
                 .replace("[CRITICAL]", "<span class='badge-crit'>CRITICAL</span>")
+                .replace("[DISPUTED]", "<span class='badge-crit'>DISPUTED</span>")
+                .replace("[REJECTED]", "<span class='badge-crit'>REJECTED</span>")
                 .replace("[HIGH]", "<span class='badge-high'>HIGH</span>")
                 .replace("[MAJOR]", "<span class='badge-high'>MAJOR</span>")
+                .replace("[MISSING]", "<span class='badge-high'>MISSING</span>")
                 .replace("[MEDIUM]", "<span class='badge-med'>MEDIUM</span>")
                 .replace("[MINOR]", "<span class='badge-med'>MINOR</span>")
+                .replace("[UNPROVEN]", "<span class='badge-med'>UNPROVEN</span>")
                 .replace("[LOW]", "<span class='badge-ok'>LOW</span>")
+                .replace("[VERIFIED]", "<span class='badge-ok'>VERIFIED</span>")
+                .replace("[ACCEPTED]", "<span class='badge-ok'>ACCEPTED</span>")
                 .replace("VERDICT: APPROVE", "<span class='badge-ok'>VERDICT: APPROVE</span>")
                 .replace("VERDICT: REVISE", "<span class='badge-high'>VERDICT: REVISE</span>");
 

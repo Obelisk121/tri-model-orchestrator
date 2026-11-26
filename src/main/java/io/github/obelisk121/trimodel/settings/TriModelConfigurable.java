@@ -17,6 +17,8 @@ import com.intellij.util.ui.JBUI;
 import io.github.obelisk121.trimodel.auth.OAuthPkceService;
 import io.github.obelisk121.trimodel.auth.OAuthSessionStore;
 import io.github.obelisk121.trimodel.auth.OAuthToken;
+import io.github.obelisk121.trimodel.model.AgentSkill;
+import io.github.obelisk121.trimodel.model.AgentSkillConfig;
 import io.github.obelisk121.trimodel.model.ConnectionMode;
 import io.github.obelisk121.trimodel.model.GeminiApiStyle;
 import io.github.obelisk121.trimodel.model.ModelProviderType;
@@ -64,6 +66,13 @@ public final class TriModelConfigurable implements SearchableConfigurable {
     private ComboBox<ModelProviderType> synthesizerBox;
     private JSpinner maxReviewRoundsSpinner;
     private JBCheckBox councilCrossCritiqueCheck;
+    private ComboBox<AgentSkillConfig.Preset> skillPresetBox;
+    private JBCheckBox skillNoBlindAgreementCheck;
+    private JBCheckBox skillTopicAuditCheck;
+    private JBCheckBox skillDetailPrecisionCheck;
+    private JBCheckBox skillBlindLabelsCheck;
+    private JBCheckBox skillDevilsAdvocateCheck;
+    private boolean syncingSkillControls = false;
     private JSpinner timeoutSpinner;
     private JSpinner maxTokensSpinner;
     private JBTextArea customInstructionsArea;
@@ -131,16 +140,58 @@ public final class TriModelConfigurable implements SearchableConfigurable {
         synthesizerBox = new ComboBox<>(ModelProviderType.values());
         maxReviewRoundsSpinner = new JSpinner(new SpinnerNumberModel(2, 1, 4, 1));
         councilCrossCritiqueCheck = new JBCheckBox("Enable Round-2 cross-critique in Parallel Council mode");
+
+        skillPresetBox = new ComboBox<>(AgentSkillConfig.Preset.values());
+        skillNoBlindAgreementCheck = new JBCheckBox(AgentSkill.NO_BLIND_AGREEMENT.getDisplayName()
+                + " — forbid blind agreement & rubber-stamp approvals");
+        skillTopicAuditCheck = new JBCheckBox(AgentSkill.TOPIC_BY_TOPIC_AUDIT.getDisplayName()
+                + " — audit every peer topic ([VERIFIED]/[DISPUTED]/[MISSING]/[UNPROVEN])");
+        skillDetailPrecisionCheck = new JBCheckBox(AgentSkill.DETAIL_PRECISION.getDisplayName()
+                + " — enforce exact symbols, edge cases, exceptions & complexity");
+        skillBlindLabelsCheck = new JBCheckBox(AgentSkill.ANONYMIZED_BLIND_REVIEW.getDisplayName()
+                + " — hide peer model brand names in handoffs");
+        skillDevilsAdvocateCheck = new JBCheckBox(AgentSkill.DEVILS_ADVOCATE.getDisplayName()
+                + " — construct breaking inputs & adversarial edge-case traces");
+
+        skillPresetBox.addActionListener(e -> {
+            if (syncingSkillControls) return;
+            AgentSkillConfig.Preset p = (AgentSkillConfig.Preset) skillPresetBox.getSelectedItem();
+            if (p != null && p != AgentSkillConfig.Preset.CUSTOM) {
+                loadSkillConfigIntoUI(AgentSkillConfig.forPreset(p));
+            }
+        });
+        Runnable updatePresetFromCheckboxes = () -> {
+            if (syncingSkillControls) return;
+            syncingSkillControls = true;
+            try {
+                skillPresetBox.setSelectedItem(readSkillConfigFromUI().detectPreset());
+            } finally {
+                syncingSkillControls = false;
+            }
+        };
+        skillNoBlindAgreementCheck.addActionListener(e -> updatePresetFromCheckboxes.run());
+        skillTopicAuditCheck.addActionListener(e -> updatePresetFromCheckboxes.run());
+        skillDetailPrecisionCheck.addActionListener(e -> updatePresetFromCheckboxes.run());
+        skillBlindLabelsCheck.addActionListener(e -> updatePresetFromCheckboxes.run());
+        skillDevilsAdvocateCheck.addActionListener(e -> updatePresetFromCheckboxes.run());
+
         timeoutSpinner = new JSpinner(new SpinnerNumberModel(120, 15, 600, 15));
         maxTokensSpinner = new JSpinner(new SpinnerNumberModel(8192, 512, 65536, 512));
 
-        customInstructionsArea = new JBTextArea(5, 40);
+        customInstructionsArea = new JBTextArea(4, 40);
         customInstructionsArea.setLineWrap(true);
         customInstructionsArea.setWrapStyleWord(true);
         JBScrollPane instructionsScroll = new JBScrollPane(customInstructionsArea);
 
         JPanel form = FormBuilder.createFormBuilder()
                 .addLabeledComponent("Default orchestration mode:", defaultModeBox)
+                .addSeparator(8)
+                .addLabeledComponent("Agent independence & precision profile:", skillPresetBox)
+                .addComponent(skillNoBlindAgreementCheck)
+                .addComponent(skillTopicAuditCheck)
+                .addComponent(skillDetailPrecisionCheck)
+                .addComponent(skillBlindLabelsCheck)
+                .addComponent(skillDevilsAdvocateCheck)
                 .addSeparator(8)
                 .addLabeledComponent("Architect / Planner role:", architectBox)
                 .addLabeledComponent("Primary Coder role:", coderBox)
@@ -156,7 +207,35 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                 .getPanel();
 
         form.setBorder(JBUI.Borders.empty(10));
-        return form;
+        JBScrollPane scroll = new JBScrollPane(form);
+        scroll.setBorder(JBUI.Borders.empty());
+        JPanel wrapper = new JPanel(new BorderLayout());
+        wrapper.add(scroll, BorderLayout.CENTER);
+        return wrapper;
+    }
+
+    private void loadSkillConfigIntoUI(AgentSkillConfig cfg) {
+        syncingSkillControls = true;
+        try {
+            skillNoBlindAgreementCheck.setSelected(cfg.noBlindAgreement);
+            skillTopicAuditCheck.setSelected(cfg.topicByTopicAudit);
+            skillDetailPrecisionCheck.setSelected(cfg.detailPrecision);
+            skillBlindLabelsCheck.setSelected(cfg.anonymizedBlindReview);
+            skillDevilsAdvocateCheck.setSelected(cfg.devilsAdvocate);
+            skillPresetBox.setSelectedItem(cfg.detectPreset());
+        } finally {
+            syncingSkillControls = false;
+        }
+    }
+
+    private AgentSkillConfig readSkillConfigFromUI() {
+        AgentSkillConfig cfg = new AgentSkillConfig();
+        cfg.noBlindAgreement = skillNoBlindAgreementCheck.isSelected();
+        cfg.topicByTopicAudit = skillTopicAuditCheck.isSelected();
+        cfg.detailPrecision = skillDetailPrecisionCheck.isSelected();
+        cfg.anonymizedBlindReview = skillBlindLabelsCheck.isSelected();
+        cfg.devilsAdvocate = skillDevilsAdvocateCheck.isSelected();
+        return cfg;
     }
 
     @Override
@@ -183,6 +262,7 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                 || synthesizerBox.getSelectedItem() != roles.getSynthesizer()
                 || ((Number) maxReviewRoundsSpinner.getValue()).intValue() != settings.getMaxReviewRounds()
                 || councilCrossCritiqueCheck.isSelected() != settings.isCouncilCrossCritique()
+                || !Objects.equals(readSkillConfigFromUI(), settings.getAgentSkills())
                 || ((Number) timeoutSpinner.getValue()).intValue() != settings.getRequestTimeoutSeconds()
                 || ((Number) maxTokensSpinner.getValue()).intValue() != settings.getMaxOutputTokens()
                 || !Objects.equals(customInstructionsArea.getText().trim(), settings.getCustomSystemInstructions().trim());
@@ -207,6 +287,7 @@ public final class TriModelConfigurable implements SearchableConfigurable {
         ));
         settings.setMaxReviewRounds(((Number) maxReviewRoundsSpinner.getValue()).intValue());
         settings.setCouncilCrossCritique(councilCrossCritiqueCheck.isSelected());
+        settings.setAgentSkills(readSkillConfigFromUI());
         settings.setRequestTimeoutSeconds(((Number) timeoutSpinner.getValue()).intValue());
         settings.setMaxOutputTokens(((Number) maxTokensSpinner.getValue()).intValue());
         settings.setCustomSystemInstructions(customInstructionsArea.getText().trim());
@@ -247,6 +328,7 @@ public final class TriModelConfigurable implements SearchableConfigurable {
         synthesizerBox.setSelectedItem(roles.getSynthesizer());
         maxReviewRoundsSpinner.setValue(settings.getMaxReviewRounds());
         councilCrossCritiqueCheck.setSelected(settings.isCouncilCrossCritique());
+        loadSkillConfigIntoUI(settings.getAgentSkills());
         timeoutSpinner.setValue(settings.getRequestTimeoutSeconds());
         maxTokensSpinner.setValue(settings.getMaxOutputTokens());
         customInstructionsArea.setText(settings.getCustomSystemInstructions());

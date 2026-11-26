@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>io.github.obelisk121.trimodel</id>
     <name>Tri-Model AI Orchestrator</name>
-    <version>1.2.1</version>
+    <version>1.3.0</version>
     <vendor email="oabaiadze@gmail.com" url="https://github.com/Obelisk121/tri-model-orchestrator">Oto Abaiadze</vendor>
     <idea-version since-build="242"/>
 
@@ -11,6 +11,7 @@
     <b>Key Capabilities:</b>
     <ul>
       <li><b>5 Multi-Model Orchestration Modes:</b> Role Pipeline (Architect &rarr; Coder &rarr; Reviewer &rarr; Finalizer), Iterative Write-Review-Fix Loop (Coder &harr; Dual Reviewers), Parallel Council &amp; Cross-Critique Consensus, Tri-Model Deep Code Audit, and Parallel Side-by-Side Comparison.</li>
+      <li><b>Anti-Sycophancy &amp; Precision Agent Skills:</b> Enforces independent judgment (forbidding blind agreement), topic-by-topic peer verification tables (<code>[VERIFIED]</code>, <code>[DISPUTED]</code>, <code>[MISSING]</code>, <code>[UNPROVEN]</code>), blind anonymized peer handoffs, high-precision detail rules, optional Devil's Advocate stress-testing, and an engine-level contradiction guard against rubber-stamp approvals.</li>
       <li><b>Flexible Role Assignment:</b> Assign Claude, ChatGPT, or Gemini to any engineering role (Architect, Coder, Reviewer, Chair/Synthesizer).</li>
       <li><b>Three Compliant Auth Modes per Model:</b> Official REST API Keys (stored in JetBrains PasswordSafe), <b>Temporary Browser OAuth 2.0 (PKCE + 127.0.0.1 loopback)</b> opening your default web browser with RAM-only sessions, or Local CLI tools (<code>claude</code>, <code>codex</code>, <code>gemini</code>).</li>
       <li><b>Deep IDE Integration:</b> Attaches active files, code selections, extra workspace files, and live IDE inspection diagnostics; previews proposed edits in the native Diff Viewer; applies single- or multi-file changes atomically with full Undo support.</li>
@@ -22,6 +23,12 @@
     ]]></description>
 
     <change-notes><![CDATA[
+    <b>1.3.0</b>
+    <ul>
+      <li>Added composable <b>Independent Verification &amp; Anti-Sycophancy Agent Skills</b> (enabled by default): forbids blind agreement between agents, enforces topic-by-topic peer analysis matrices (<code>[VERIFIED]</code>, <code>[DISPUTED]</code>, <code>[MISSING]</code>, <code>[UNPROVEN]</code>), demands concrete symbol/edge-case precision, anonymizes peer brand names in handoffs, and adds optional <b>Strict Adversarial (Devil's Advocate)</b> stress-testing.</li>
+      <li>Added engine-level anti-rubber-stamp contradiction guard: if a reviewer outputs <code>VERDICT: APPROVE</code> while flagging <code>[CRITICAL]</code>, <code>[MAJOR]</code>, or <code>[DISPUTED]</code> defects, the engine automatically triggers a refinement round.</li>
+      <li>Added quick <b>Agent Skills</b> profile selector directly in the Tool Window header and individual skill toggles in Settings.</li>
+    </ul>
     <b>1.2.1</b>
     <ul>
       <li>Fixed ChatGPT (<code>codex</code>) CLI execution outside Git directories by passing <code>--skip-git-repo-check --ephemeral --color never -s read-only</code> (including automatic migration of previously saved configs).</li>

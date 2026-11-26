@@ -6,6 +6,7 @@ import com.intellij.openapi.components.Service;
 import com.intellij.openapi.components.State;
 import com.intellij.openapi.components.Storage;
 import com.intellij.util.xmlb.XmlSerializerUtil;
+import io.github.obelisk121.trimodel.model.AgentSkillConfig;
 import io.github.obelisk121.trimodel.model.ModelProviderType;
 import io.github.obelisk121.trimodel.model.OrchestrationMode;
 import io.github.obelisk121.trimodel.model.RoleAssignment;
@@ -39,6 +40,7 @@ public final class TriModelSettings implements PersistentStateComponent<TriModel
 
         public int maxReviewRounds = 2;
         public boolean councilCrossCritique = true;
+        public AgentSkillConfig agentSkills = AgentSkillConfig.forPreset(AgentSkillConfig.Preset.INDEPENDENT_PRECISE);
         public int requestTimeoutSeconds = 120;
         public int maxOutputTokens = 8192;
         public String customSystemInstructions = "";
@@ -98,6 +100,9 @@ public final class TriModelSettings implements PersistentStateComponent<TriModel
         if (s.synthesizerRole == null) s.synthesizerRole = ModelProviderType.CLAUDE;
         if (s.maxReviewRounds < 1) s.maxReviewRounds = 1;
         if (s.maxReviewRounds > 4) s.maxReviewRounds = 4;
+        if (s.agentSkills == null) {
+            s.agentSkills = AgentSkillConfig.forPreset(AgentSkillConfig.Preset.INDEPENDENT_PRECISE);
+        }
         if (s.requestTimeoutSeconds < 15) s.requestTimeoutSeconds = 15;
         if (s.maxOutputTokens < 512) s.maxOutputTokens = 512;
         if (s.customSystemInstructions == null) s.customSystemInstructions = "";
@@ -173,6 +178,17 @@ public final class TriModelSettings implements PersistentStateComponent<TriModel
 
     public void setCouncilCrossCritique(boolean councilCrossCritique) {
         state.councilCrossCritique = councilCrossCritique;
+    }
+
+    public AgentSkillConfig getAgentSkills() {
+        ensureDefaults(state);
+        return state.agentSkills.copy();
+    }
+
+    public void setAgentSkills(AgentSkillConfig skills) {
+        state.agentSkills = skills == null
+                ? AgentSkillConfig.forPreset(AgentSkillConfig.Preset.INDEPENDENT_PRECISE)
+                : skills.copy();
     }
 
     public int getRequestTimeoutSeconds() {

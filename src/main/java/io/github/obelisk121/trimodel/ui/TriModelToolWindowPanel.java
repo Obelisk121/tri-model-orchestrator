@@ -26,6 +26,8 @@ import io.github.obelisk121.trimodel.auth.OAuthSessionStore;
 import io.github.obelisk121.trimodel.ide.CodeApplyService;
 import io.github.obelisk121.trimodel.ide.IdeContextService;
 import io.github.obelisk121.trimodel.ide.TriModelProjectService;
+import io.github.obelisk121.trimodel.model.AgentSkill;
+import io.github.obelisk121.trimodel.model.AgentSkillConfig;
 import io.github.obelisk121.trimodel.model.ContextAttachment;
 import io.github.obelisk121.trimodel.model.ModelProviderType;
 import io.github.obelisk121.trimodel.model.OrchestrationListener;
@@ -84,6 +86,7 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
 
     // Header & Orchestration controls
     private final ComboBox<OrchestrationMode> modeCombo = new ComboBox<>(OrchestrationMode.values());
+    private final ComboBox<AgentSkillConfig.Preset> skillPresetCombo = new ComboBox<>(AgentSkillConfig.Preset.values());
     private final ComboBox<ModelProviderType> architectCombo = new ComboBox<>(ModelProviderType.values());
     private final ComboBox<ModelProviderType> coderCombo = new ComboBox<>(ModelProviderType.values());
     private final ComboBox<ModelProviderType> reviewerCombo = new ComboBox<>(ModelProviderType.values());
@@ -216,6 +219,13 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
         row1.add(modePanel, BorderLayout.CENTER);
         row1.add(rightControls, BorderLayout.EAST);
 
+        // Row 1b: Agent Independence & Precision Skills selector
+        JPanel skillsRow = new JPanel(new BorderLayout(6, 0));
+        skillsRow.setBorder(JBUI.Borders.emptyBottom(4));
+        JBLabel skillsLbl = new JBLabel("Agent Skills:");
+        skillsRow.add(skillsLbl, BorderLayout.WEST);
+        skillsRow.add(skillPresetCombo, BorderLayout.CENTER);
+
         // Row 2: Responsive 2x2 Role assignment grid (never clips in narrow PyCharm sidebars)
         JPanel row2 = new JPanel(new GridLayout(2, 2, 8, 4));
         row2.setBorder(BorderFactory.createCompoundBorder(
@@ -228,6 +238,7 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
         row2.add(labeledRoleCell("Chair:", chairCombo));
 
         header.add(row1);
+        header.add(skillsRow);
         header.add(row2);
         return header;
     }
@@ -391,13 +402,24 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
     }
 
     private void wireEvents() {
-        // Persist mode/role changes
+        // Persist mode/skills/role changes
         modeCombo.addActionListener(e -> {
             if (updatingControls) return;
             OrchestrationMode selected = (OrchestrationMode) modeCombo.getSelectedItem();
             if (selected != null) {
                 TriModelSettings.getInstance().setDefaultMode(selected);
                 modeCombo.setToolTipText(selected.getDescription());
+            }
+        });
+
+        skillPresetCombo.addActionListener(e -> {
+            if (updatingControls) return;
+            AgentSkillConfig.Preset selected = (AgentSkillConfig.Preset) skillPresetCombo.getSelectedItem();
+            if (selected != null) {
+                skillPresetCombo.setToolTipText(selected.getDescription());
+                if (selected != AgentSkillConfig.Preset.CUSTOM) {
+                    TriModelSettings.getInstance().setAgentSkills(AgentSkillConfig.forPreset(selected));
+                }
             }
         });
 
@@ -534,6 +556,7 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
         OrchestrationMode mode = (OrchestrationMode) modeCombo.getSelectedItem();
         RoleAssignment roles = getSelectedRoles();
 
+        AgentSkillConfig activeSkills = settings.getAgentSkills();
         OrchestrationEngine.RunOptions options = new OrchestrationEngine.RunOptions(
                 mode,
                 roles,
@@ -543,7 +566,8 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
                 settings.isCouncilCrossCritique(),
                 settings.getMaxOutputTokens(),
                 settings.getRequestTimeoutSeconds(),
-                settings.getCustomSystemInstructions()
+                settings.getCustomSystemInstructions(),
+                activeSkills
         );
 
         // Reset live UI state
@@ -563,8 +587,12 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
         metricsLabel.setText("");
         statusLabel.setText("Starting " + mode.getDisplayName() + " (" + clients.size() + " model(s) active)...");
 
+        String skillList = activeSkills.enabledSkills().isEmpty()
+                ? "Standard"
+                : activeSkills.enabledSkills().stream().map(AgentSkill::getDisplayName).reduce((a, b) -> a + ", " + b).orElse("Standard");
         String runningBanner = "# Running " + mode.getDisplayName() + "\n\n"
                 + "**Active Models:** " + formatProviderList(clients) + "\n\n"
+                + "**Agent Skills:** " + activeSkills.detectPreset().getDisplayName() + " (" + skillList + ")\n\n"
                 + "**Attached Context:** " + (attachments.isEmpty() ? "None" : attachments.size() + " file(s)") + "\n\n"
                 + "*Live progress is updating in the **Timeline** tab...*";
         setHtml(finalOutputPane, runningBanner);
@@ -842,6 +870,9 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
             TriModelSettings settings = TriModelSettings.getInstance();
             modeCombo.setSelectedItem(settings.getDefaultMode());
             modeCombo.setToolTipText(settings.getDefaultMode().getDescription());
+            AgentSkillConfig.Preset preset = settings.getAgentSkills().detectPreset();
+            skillPresetCombo.setSelectedItem(preset);
+            skillPresetCombo.setToolTipText(preset.getDescription());
             RoleAssignment roles = settings.getRoleAssignment();
             architectCombo.setSelectedItem(roles.getArchitect());
             coderCombo.setSelectedItem(roles.getCoder());
