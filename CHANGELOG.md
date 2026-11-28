@@ -4,6 +4,14 @@ All notable changes to **Tri-Model AI Orchestrator** are documented in this file
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-11-28
+
+### Changed & Removed
+- **Full Refactor from Retired Legacy `gemini` CLI to Google Antigravity CLI (`agy`):**
+  - Removed all retired `gemini`-CLI-specific workarounds (`~/.gemini/settings.json` patching, `[Y/n]` stdin consent, `GEMINI_CLI_TRUST_WORKSPACE`, `gemini models -o json`) across `CliModelClient`, `ModelDiscoveryService`, and `EnvironmentAutoDetector`.
+  - Standardized Browser Sign-In on the three active official CLIs: **`claude`**, **`codex`**, and Google Antigravity **`agy`**.
+  - Fixed IntelliJ `PersistentStateComponent` XML serialization default (`schemaVersion = 0`) and made migration from legacy `gemini` CLI to `agy` unconditional in `TriModelSettings.ensureDefaults`, guaranteeing existing PyCharm installations immediately switch to `agy` without manual reset.
+
 ## [1.4.2] - 2026-11-28
 
 ### Changed & Fixed

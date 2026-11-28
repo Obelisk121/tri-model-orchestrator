@@ -517,9 +517,12 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                 refreshModelsAsync(true, true);
             });
 
+            String cliDesc = type == ModelProviderType.GEMINI
+                    ? "<code>agy</code> (Google Antigravity)"
+                    : "<code>" + type.getDefaultCliExecutable() + "</code>";
             return FormBuilder.createFormBuilder()
-                    .addComponent(new JBLabel("<html>Uses your official <code>" + type.getDefaultCliExecutable()
-                            + "</code> CLI to sign in via your default web browser &mdash; <b>no API key or OAuth Client ID needed</b>.</html>"))
+                    .addComponent(new JBLabel("<html>Uses your official " + cliDesc
+                            + " CLI to sign in via your default web browser &mdash; <b>no API key or OAuth Client ID needed</b>.</html>"))
                     .addLabeledComponent("CLI status:", cliDetectionLabel)
                     .addComponent(buttons)
                     .addComponent(advToggle)

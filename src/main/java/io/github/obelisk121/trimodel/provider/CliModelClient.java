@@ -1,7 +1,5 @@
 package io.github.obelisk121.trimodel.provider;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.intellij.ide.BrowserUtil;
@@ -35,10 +33,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Executes a local AI CLI tool (e.g., claude, codex, gemini, agy) without shell interpolation.
- * Automatically resolves macOS/Linux/Windows executable paths, normalizes provider- and binary-specific
- * CLI arguments, handles non-interactive OAuth consent prompts (e.g., Gemini CLI's [Y/n] prompt),
- * checks authentication status, and supports sign-out across all providers.
+ * Executes a local AI CLI tool (claude, codex, or Google Antigravity agy) without shell interpolation.
+ * Automatically resolves macOS, Linux, and Windows executable paths, normalizes per-CLI arguments
+ * and live-selected model flags, checks authentication status, and runs browser sign-in/sign-out.
  */
 public final class CliModelClient implements ModelClient {
     private static final Pattern URL_PATTERN = Pattern.compile("https://[^\\s\"'<>\\])]+");
@@ -140,7 +137,6 @@ public final class CliModelClient implements ModelClient {
             pb.directory(new File(userHome));
         }
         enrichPathForGuiApps(pb.environment());
-        applyProviderCliEnvironment(canonicalCliName(executable), pb.environment(), false);
 
         Process process;
         try {
@@ -194,13 +190,6 @@ public final class CliModelClient implements ModelClient {
 
             if (exitCode != 0) {
                 String detail = extractCliErrorDetail(providerType, executable, errText, outputText);
-                if ("gemini".equals(canonicalCliName(executable))
-                        && (detail.toLowerCase(Locale.ROOT).contains("no longer supported")
-                        || detail.toLowerCase(Locale.ROOT).contains("antigravity"))) {
-                    detail += resolveExecutable("agy") != null
-                            ? " — Click 'Auto-Detect All' or switch Gemini CLI executable to 'agy' (already installed)."
-                            : " — Install Google Antigravity CLI ('agy'): " + ModelProviderType.GEMINI.getCliInstallHint();
-                }
                 if (detail.length() > 500) {
                     detail = detail.substring(0, 500) + "...";
                 }
@@ -246,7 +235,6 @@ public final class CliModelClient implements ModelClient {
             pb.directory(new File(userHome));
         }
         enrichPathForGuiApps(pb.environment());
-        applyProviderCliEnvironment(canonicalCliName(resolvedExe), pb.environment(), false);
 
         Process p;
         try {
@@ -289,7 +277,7 @@ public final class CliModelClient implements ModelClient {
     }
 
     /**
-     * Checks whether the configured CLI binary is installed and, where supported, whether the user is signed in.
+     * Checks whether the configured CLI binary is installed and signed in.
      */
     public static CliAuthStatus checkCliAuthStatus(ModelProviderType type, String executable) {
         String binName = (executable == null || executable.isBlank())
@@ -346,10 +334,6 @@ public final class CliModelClient implements ModelClient {
             return new CliAuthStatus(true, resolved, AuthState.UNKNOWN, "codex CLI ready");
         }
 
-        if ("gemini".equals(canonical)) {
-            return checkGeminiCliAuthFiles(resolved, defaultGeminiConfigDir());
-        }
-
         if ("agy".equals(canonical)) {
             CliCommandResult res = runUtilityCommand(resolved, List.of("models"), 10, () -> false);
             if (res.launchError() == null && res.exitCode() == 0) {
@@ -357,7 +341,7 @@ public final class CliModelClient implements ModelClient {
                         ModelDiscoveryService.parseAgyCliModelsText(res.stdout(), type);
                 if (!models.isEmpty()) {
                     return new CliAuthStatus(true, resolved, AuthState.SIGNED_IN,
-                            "agy CLI signed in (" + models.size() + " " + type.getShortName() + " models)");
+                            "Antigravity (agy) signed in (" + models.size() + " " + type.getShortName() + " models)");
                 }
             }
             if (res.launchError() == null && res.exitCode() != 0) {
@@ -365,77 +349,19 @@ public final class CliModelClient implements ModelClient {
                 if (errLower.contains("auth") || errLower.contains("login") || errLower.contains("sign in")
                         || errLower.contains("unauthorized") || errLower.contains("unauthenticated")) {
                     return new CliAuthStatus(true, resolved, AuthState.SIGNED_OUT,
-                            "agy CLI installed — sign in required");
+                            "Antigravity (agy) installed — sign in required");
                 }
             }
-            return new CliAuthStatus(true, resolved, AuthState.UNKNOWN, "agy CLI ready");
+            return new CliAuthStatus(true, resolved, AuthState.UNKNOWN, "Antigravity (agy) CLI ready");
         }
 
         return new CliAuthStatus(true, resolved, AuthState.UNKNOWN, binName + " CLI ready");
-    }
-
-    static CliAuthStatus checkGeminiCliAuthFiles(String resolvedPath, Path geminiDir) {
-        String selectedAuthType = "";
-        if (geminiDir != null) {
-            Path settingsFile = geminiDir.resolve("settings.json");
-            if (Files.isRegularFile(settingsFile)) {
-                try {
-                    JsonObject root = JsonParser.parseString(Files.readString(settingsFile, StandardCharsets.UTF_8)).getAsJsonObject();
-                    if (root.has("security") && root.get("security").isJsonObject()) {
-                        JsonObject sec = root.getAsJsonObject("security");
-                        if (sec.has("auth") && sec.get("auth").isJsonObject()) {
-                            selectedAuthType = HttpTransport.getString(sec.getAsJsonObject("auth"), "selectedType");
-                        }
-                    }
-                } catch (Exception ignored) {
-                }
-            }
-            Path accountsFile = geminiDir.resolve("google_accounts.json");
-            if (Files.isRegularFile(accountsFile)) {
-                try {
-                    String text = Files.readString(accountsFile, StandardCharsets.UTF_8);
-                    JsonObject obj = JsonParser.parseString(text).getAsJsonObject();
-                    String active = HttpTransport.getString(obj, "active");
-                    if (!active.isBlank()) {
-                        return new CliAuthStatus(true, resolvedPath, AuthState.SIGNED_IN,
-                                "gemini CLI signed in (" + active + ")");
-                    }
-                } catch (Exception ignored) {
-                }
-            }
-            Path credsFile = geminiDir.resolve("oauth_creds.json");
-            if (Files.isRegularFile(credsFile)) {
-                try {
-                    String text = Files.readString(credsFile, StandardCharsets.UTF_8);
-                    JsonObject obj = JsonParser.parseString(text).getAsJsonObject();
-                    if (!HttpTransport.getString(obj, "access_token").isBlank()
-                            || !HttpTransport.getString(obj, "refresh_token").isBlank()) {
-                        return new CliAuthStatus(true, resolvedPath, AuthState.SIGNED_IN,
-                                "gemini CLI signed in (Google OAuth)");
-                    }
-                } catch (Exception ignored) {
-                }
-            }
-        }
-        if (!"oauth-personal".equalsIgnoreCase(selectedAuthType)) {
-            String envKey = System.getenv("GEMINI_API_KEY");
-            String googleKey = System.getenv("GOOGLE_API_KEY");
-            if ((envKey != null && !envKey.isBlank()) || (googleKey != null && !googleKey.isBlank())) {
-                return new CliAuthStatus(true, resolvedPath, AuthState.SIGNED_IN,
-                        "gemini CLI ready (API key env)");
-            }
-        }
-        return new CliAuthStatus(true, resolvedPath, AuthState.SIGNED_OUT,
-                "gemini CLI installed — sign in required");
     }
 
     public static boolean supportsCliLogout(ModelProviderType type, String executable) {
         String binName = (executable == null || executable.isBlank())
                 ? type.getDefaultCliExecutable() : executable.trim();
         String canonical = canonicalCliName(binName);
-        if ("gemini".equals(canonical)) {
-            return true;
-        }
         if ("agy".equals(canonical)) {
             return false;
         }
@@ -443,7 +369,7 @@ public final class CliModelClient implements ModelClient {
     }
 
     /**
-     * Resolves an executable name (such as 'claude', 'codex', 'gemini', or 'agy') to an absolute path
+     * Resolves an executable name (claude, codex, or agy) to an absolute path
      * across PATH and OS-specific macOS, Linux, and Windows install directories. Returns null if not found.
      */
     public static String resolveExecutable(String executable) {
@@ -527,7 +453,6 @@ public final class CliModelClient implements ModelClient {
     }
 
     static List<String> windowsExecutableExtensions(Map<String, String> env) {
-        // Prefer native .exe over .cmd/.bat shims so Windows npm shims never win over native executables
         LinkedHashSet<String> exts = new LinkedHashSet<>();
         exts.add(".exe");
         exts.add(".cmd");
@@ -567,9 +492,9 @@ public final class CliModelClient implements ModelClient {
     }
 
     /**
-     * Launches the vendor's official CLI browser login command (e.g., 'claude auth login',
-     * 'codex login', 'gemini', or 'agy'). Automatically confirms Gemini CLI's non-interactive
-     * [Y/n] consent prompt and opens authorization URLs in the default web browser.
+     * Launches the vendor's official CLI browser login command (claude auth login, codex login, or agy).
+     * Lets CLIs open the default browser natively (avoiding duplicate tabs) and falls back to
+     * BrowserUtil.browse() only if a CLI explicitly fails to launch the browser.
      */
     public static String launchOfficialCliLogin(ModelProviderType type, String executable, Consumer<String> statusOut) {
         Consumer<String> status = statusOut == null ? s -> {} : statusOut;
@@ -583,12 +508,7 @@ public final class CliModelClient implements ModelClient {
         List<String> cmd = new ArrayList<>();
         cmd.add(resolved);
 
-        if ("gemini".equals(canonical)) {
-            // Gemini CLI rejects browser sign-in with exit code 41 if ~/.gemini/settings.json is pinned to gemini-api-key.
-            // Switch it to Google's documented 'oauth-personal' browser login mode before launching.
-            ensureGeminiCliOAuthMode();
-            cmd.addAll(List.of("-p", "Reply OK", "--output-format", "text"));
-        } else if ("agy".equals(canonical)) {
+        if ("agy".equals(canonical)) {
             cmd.addAll(List.of("--output-format", "text", "--disable-slash-commands", "-p", "Reply OK"));
         } else if ("claude".equals(canonical)) {
             cmd.addAll(List.of("auth", "login"));
@@ -605,13 +525,11 @@ public final class CliModelClient implements ModelClient {
             pb.directory(new File(userHome));
         }
         enrichPathForGuiApps(pb.environment());
-        applyProviderCliEnvironment(canonical, pb.environment(), true);
 
         try {
             status.accept("Starting browser sign-in for " + type.getShortName() + " (" + canonical + ")...");
             Process p = pb.start();
             AtomicBoolean openedBrowser = new AtomicBoolean(false);
-            AtomicBoolean sentConsent = new AtomicBoolean(false);
             AtomicBoolean browserNotified = new AtomicBoolean(false);
             StringBuilder output = new StringBuilder();
 
@@ -628,23 +546,6 @@ public final class CliModelClient implements ModelClient {
                             snapshot = stripAnsiAndControl(output.toString());
                         }
 
-                        // Gemini CLI prints "Do you want to continue? [Y/n]: " WITHOUT a trailing newline
-                        // and blocks on stdin before opening the OAuth browser page.
-                        if ("gemini".equals(canonical)
-                                && !sentConsent.get()
-                                && (snapshot.contains("Do you want to continue?") || snapshot.contains("[Y/n]"))
-                                && sentConsent.compareAndSet(false, true)) {
-                            status.accept("Browser opened for Gemini — complete Google Sign-In in your browser...");
-                            browserNotified.set(true);
-                            try {
-                                OutputStream stdin = p.getOutputStream();
-                                stdin.write("y\n".getBytes(StandardCharsets.UTF_8));
-                                stdin.flush();
-                                stdin.close();
-                            } catch (IOException ignored) {
-                            }
-                        }
-
                         String authUrl = extractAuthUrl(snapshot);
                         if (!browserNotified.get() && (authUrl != null
                                 || snapshot.toLowerCase(Locale.ROOT).contains("opening browser")
@@ -654,10 +555,6 @@ public final class CliModelClient implements ModelClient {
                             }
                         }
 
-                        // Official CLIs (claude, codex, gemini) launch the OS browser natively.
-                        // Calling BrowserUtil.browse() unconditionally opens a duplicate tab (breaking Codex
-                        // with 2 tabs and sending Claude to its manual copy-paste code fallback page).
-                        // Only invoke BrowserUtil.browse() if the CLI explicitly fails to open the browser.
                         if (authUrl != null && !openedBrowser.get()
                                 && shouldAutoOpenPrintedUrl(canonical, snapshot, authUrl)
                                 && openedBrowser.compareAndSet(false, true)) {
@@ -673,26 +570,6 @@ public final class CliModelClient implements ModelClient {
             }, "TriModel-CliLogin-" + type.name());
             watcher.setDaemon(true);
             watcher.start();
-
-            // If Gemini CLI is already signed in, it skips the [Y/n] prompt and may wait for stdin EOF
-            // before executing "-p Reply OK". Close stdin after a short grace period if no prompt appeared.
-            if ("gemini".equals(canonical)) {
-                Thread stdinGuard = new Thread(() -> {
-                    try {
-                        Thread.sleep(4500);
-                        if (!sentConsent.get() && p.isAlive()) {
-                            try {
-                                p.getOutputStream().close();
-                            } catch (IOException ignored) {
-                            }
-                        }
-                    } catch (InterruptedException ignored) {
-                        Thread.currentThread().interrupt();
-                    }
-                }, "TriModel-GeminiStdinGuard");
-                stdinGuard.setDaemon(true);
-                stdinGuard.start();
-            }
 
             if (p.waitFor(180, TimeUnit.SECONDS)) {
                 watcher.join(1500);
@@ -722,15 +599,8 @@ public final class CliModelClient implements ModelClient {
         String binName = (executable == null || executable.isBlank()) ? type.getDefaultCliExecutable() : executable.trim();
         String canonical = canonicalCliName(binName);
 
-        if ("gemini".equals(canonical)) {
-            boolean cleared = clearGeminiOAuthCredentials(defaultGeminiConfigDir());
-            ModelDiscoveryService.invalidateCache(type);
-            return cleared
-                    ? "Signed out of Gemini CLI (cleared cached Google OAuth credentials)."
-                    : "Gemini CLI already signed out (no cached OAuth credentials found).";
-        }
         if ("agy".equals(canonical)) {
-            return "To sign out of agy CLI, run 'agy' in Terminal and enter /logout.";
+            return "To sign out of Antigravity (agy) CLI, run 'agy' in Terminal and enter /logout.";
         }
 
         String logoutArgs = type.getDefaultCliLogoutArgs();
@@ -751,46 +621,6 @@ public final class CliModelClient implements ModelClient {
         }
         String detail = extractCliErrorDetail(type, binName, res.stderr(), res.stdout());
         return "Sign-out exited with code " + res.exitCode() + (detail.isBlank() ? "" : ": " + detail);
-    }
-
-    /**
-     * Clears Gemini CLI's cached OAuth credential files (~/.gemini/oauth_creds.json and active account in
-     * ~/.gemini/google_accounts.json), matching gemini-cli's clearCachedCredentialFile() behavior.
-     */
-    public static boolean clearGeminiOAuthCredentials(Path geminiDir) {
-        if (geminiDir == null || !Files.isDirectory(geminiDir)) {
-            return false;
-        }
-        boolean removedAnything = false;
-        try {
-            Path credsFile = geminiDir.resolve("oauth_creds.json");
-            if (Files.deleteIfExists(credsFile)) {
-                removedAnything = true;
-            }
-        } catch (IOException ignored) {
-        }
-        try {
-            Path accountsFile = geminiDir.resolve("google_accounts.json");
-            if (Files.isRegularFile(accountsFile)) {
-                String existing = Files.readString(accountsFile, StandardCharsets.UTF_8);
-                JsonObject root;
-                try {
-                    root = JsonParser.parseString(existing).getAsJsonObject();
-                } catch (Exception e) {
-                    root = new JsonObject();
-                }
-                boolean hadActive = root.has("active") && !root.get("active").isJsonNull()
-                        && !HttpTransport.getString(root, "active").isBlank();
-                if (hadActive) {
-                    root.add("active", com.google.gson.JsonNull.INSTANCE);
-                    Gson pretty = new GsonBuilder().serializeNulls().setPrettyPrinting().create();
-                    Files.writeString(accountsFile, pretty.toJson(root) + "\n", StandardCharsets.UTF_8);
-                    removedAnything = true;
-                }
-            }
-        } catch (IOException ignored) {
-        }
-        return removedAnything;
     }
 
     public static String canonicalCliName(String executable) {
@@ -824,7 +654,7 @@ public final class CliModelClient implements ModelClient {
     }
 
     /**
-     * Normalizes CLI arguments for the actual executable being invoked (claude, codex, gemini, agy)
+     * Normalizes CLI arguments for claude, codex, and Google Antigravity (agy)
      * and injects the dynamically selected model flag (-m / --model) when a concrete model is chosen.
      */
     public static List<String> normalizeArgsForExecution(
@@ -873,7 +703,7 @@ public final class CliModelClient implements ModelClient {
         }
 
         if ("agy".equals(canonical)) {
-            // agy uses --output-format text and -p "{prompt}" (rejects -o and rejects empty -p "")
+            // Antigravity CLI uses --output-format text and -p "{prompt}" (rejects -o and empty -p "")
             boolean hasPromptPlaceholder = out.stream().anyMatch(t -> t.contains("{prompt}"));
             if (out.isEmpty() || !hasPromptPlaceholder) {
                 List<String> agyArgs = new ArrayList<>();
@@ -900,28 +730,12 @@ public final class CliModelClient implements ModelClient {
             return out;
         }
 
-        if ("gemini".equals(canonical)) {
-            if (out.isEmpty()) {
-                out.addAll(List.of("-p", "", "--output-format", "text"));
-            }
-            for (int i = 0; i < out.size(); i++) {
-                if ("-o".equals(out.get(i))) {
-                    out.set(i, "--output-format");
-                }
-            }
-            if (concreteModel && !containsFlag(out, "-m", "--model")) {
-                out.add(0, selectedModelId.trim());
-                out.add(0, "-m");
-            }
-            return out;
-        }
-
         return out;
     }
 
     /**
-     * Extracts the most actionable error detail from CLI stderr/stdout, stripping ANSI codes
-     * and skipping verbose startup banners (e.g., Codex CLI's metadata header).
+     * Extracts the most actionable error detail from CLI stderr/stdout, stripping ANSI codes,
+     * spinner progress lines, and verbose startup banners (e.g., Codex CLI's metadata header).
      */
     public static String extractCliErrorDetail(
             ModelProviderType provider,
@@ -942,7 +756,7 @@ public final class CliModelClient implements ModelClient {
         for (String line : cleaned.split("\\R")) {
             int lastCr = line.lastIndexOf('\r');
             String t = (lastCr >= 0 ? line.substring(lastCr + 1) : line).trim();
-            if (!t.isBlank()) {
+            if (!t.isBlank() && !t.contains("Fetching available models")) {
                 lines.add(t);
             }
         }
@@ -961,7 +775,6 @@ public final class CliModelClient implements ModelClient {
             }
         }
 
-        // Prefer explicit error/auth lines when present
         List<String> prioritized = new ArrayList<>();
         for (String line : lines) {
             String lower = line.toLowerCase(Locale.ROOT);
@@ -1019,8 +832,8 @@ public final class CliModelClient implements ModelClient {
         if (cliReportedOpenFailure) {
             return true;
         }
-        // claude, codex, and gemini all open the OS default browser natively; opening a second time creates duplicate tabs.
-        if ("claude".equals(canonicalCli) || "codex".equals(canonicalCli) || "gemini".equals(canonicalCli)) {
+        // claude and codex open the OS default browser natively; opening a second time creates duplicate tabs.
+        if ("claude".equals(canonicalCli) || "codex".equals(canonicalCli)) {
             return false;
         }
         // For agy or custom CLIs, only open if they did not already report opening the browser themselves.
@@ -1044,7 +857,7 @@ public final class CliModelClient implements ModelClient {
             }
             if (lower.contains("oauth") || lower.contains("authorize") || lower.contains("accounts.google.com")
                     || lower.contains("auth.openai.com") || lower.contains("claude.ai")
-                    || lower.contains("console.anthropic.com") || lower.contains("codeassist.google.com")
+                    || lower.contains("console.anthropic.com") || lower.contains("antigravity.google")
                     || lower.contains("client_id=") || lower.contains("redirect_uri=")
                     || lower.contains("/login") || lower.contains("/signin") || lower.contains("/auth")) {
                 return url;
@@ -1080,16 +893,6 @@ public final class CliModelClient implements ModelClient {
         return false;
     }
 
-    private static Path defaultGeminiConfigDir() {
-        String customHome = getEnvCaseInsensitive(System.getenv(), "GEMINI_CLI_HOME");
-        if (customHome != null && !customHome.isBlank()) {
-            return Path.of(customHome.trim(), ".gemini");
-        }
-        String home = System.getProperty("user.home", "");
-        if (home.isBlank()) return null;
-        return Path.of(home, ".gemini");
-    }
-
     public static List<String> candidateBinDirectories() {
         return candidateBinDirectories(
                 System.getProperty("os.name", ""),
@@ -1100,7 +903,7 @@ public final class CliModelClient implements ModelClient {
 
     /**
      * Builds an ordered list of candidate executable directories for macOS, Linux, and Windows,
-     * covering PATH, Homebrew/Linuxbrew/MacPorts, npm/pnpm/yarn/bun, nvm/fnm/volta/asdf/mise,
+     * covering PATH, Homebrew/Linuxbrew/MacPorts, Antigravity, npm/pnpm/yarn/bun, nvm/fnm/volta/asdf/mise,
      * WinGet/Scoop/Chocolatey, Snap/Flatpak, Cargo, and user-local CLI directories.
      */
     public static List<String> candidateBinDirectories(String osName, String homeDir, Map<String, String> env) {
@@ -1196,7 +999,6 @@ public final class CliModelClient implements ModelClient {
             dirs.add("/opt/local/bin");
             dirs.add("/Applications/Antigravity.app/Contents/Resources/app/bin");
         } else {
-            // Linux Homebrew, Snap, Flatpak, Nix, opt
             dirs.add("/home/linuxbrew/.linuxbrew/bin");
             dirs.add("/snap/bin");
             dirs.add("/var/lib/flatpak/exports/bin");
@@ -1276,7 +1078,6 @@ public final class CliModelClient implements ModelClient {
         if (parent == null || !parent.isDirectory()) return;
         File[] children = parent.listFiles();
         if (children == null || children.length == 0) return;
-        // Sort newest semver directory first (e.g., v22.10.0 before v18.19.0)
         Arrays.sort(children, Comparator.comparing(File::getName, CliModelClient::compareSemverDescending));
         for (File child : children) {
             if (!child.isDirectory()) continue;
@@ -1367,47 +1168,6 @@ public final class CliModelClient implements ModelClient {
         return sb.toString();
     }
 
-    /**
-     * Updates Gemini CLI's ~/.gemini/settings.json auth selectedType to 'oauth-personal'
-     * so 'Sign In in Browser' launches Google OAuth instead of demanding GEMINI_API_KEY.
-     */
-    static void ensureGeminiCliOAuthMode() {
-        Path geminiDir = defaultGeminiConfigDir();
-        if (geminiDir == null) return;
-        Path settingsPath = geminiDir.resolve("settings.json");
-        try {
-            String existing = Files.isRegularFile(settingsPath)
-                    ? Files.readString(settingsPath, StandardCharsets.UTF_8)
-                    : "{}";
-            String updated = patchGeminiSettingsForOAuth(existing);
-            Files.createDirectories(settingsPath.getParent());
-            Files.writeString(settingsPath, updated, StandardCharsets.UTF_8);
-        } catch (IOException ignored) {
-        }
-    }
-
-    public static String patchGeminiSettingsForOAuth(String jsonText) {
-        JsonObject root;
-        try {
-            root = (jsonText == null || jsonText.isBlank())
-                    ? new JsonObject()
-                    : JsonParser.parseString(jsonText).getAsJsonObject();
-        } catch (Exception e) {
-            root = new JsonObject();
-        }
-        JsonObject security = (root.has("security") && root.get("security").isJsonObject())
-                ? root.getAsJsonObject("security")
-                : new JsonObject();
-        JsonObject auth = (security.has("auth") && security.get("auth").isJsonObject())
-                ? security.getAsJsonObject("auth")
-                : new JsonObject();
-        auth.addProperty("selectedType", "oauth-personal");
-        security.add("auth", auth);
-        root.add("security", security);
-        Gson pretty = new GsonBuilder().setPrettyPrinting().create();
-        return pretty.toJson(root) + "\n";
-    }
-
     static List<String> tokenizeArgs(String args) {
         List<String> tokens = new ArrayList<>();
         if (args == null || args.isBlank()) {
@@ -1459,25 +1219,6 @@ public final class CliModelClient implements ModelClient {
         t.setDaemon(true);
         t.start();
         return t;
-    }
-
-    /**
-     * Applies CLI-specific environment variables required for headless execution from PyCharm.
-     * For Gemini CLI, sets GEMINI_CLI_TRUST_WORKSPACE=true so headless calls succeed outside
-     * interactively-trusted folders (preventing exit code 55) while remaining compatible with older versions.
-     */
-    public static void applyProviderCliEnvironment(String canonicalCli, Map<String, String> env, boolean oauthLoginFlow) {
-        if (env == null) return;
-        if ("gemini".equals(canonicalCli)) {
-            env.put("GEMINI_CLI_TRUST_WORKSPACE", "true");
-            env.remove("GEMINI_RESTRICTED_MODE");
-            if (oauthLoginFlow) {
-                // Ensure stale API key or NO_BROWSER env vars do not block or bypass interactive Google OAuth login
-                env.remove("GEMINI_API_KEY");
-                env.remove("GOOGLE_API_KEY");
-                env.remove("NO_BROWSER");
-            }
-        }
     }
 
     private static void enrichPathForGuiApps(Map<String, String> env) {

@@ -318,14 +318,12 @@ public final class EnvironmentAutoDetector {
     ) {
         Set<String> candidates = new LinkedHashSet<>();
         if (type == ModelProviderType.GEMINI) {
-            // Google deprecated individual OAuth on legacy gemini-cli in favor of Antigravity CLI (agy).
-            // Always prioritize agy first for Google Gemini, falling back to legacy gemini CLI if agy is absent.
+            // Google Gemini uses Google Antigravity CLI (agy) — never the retired legacy gemini CLI
             candidates.add("agy");
             if (existingExecutable != null && !existingExecutable.isBlank()
                     && !"gemini".equals(CliModelClient.canonicalCliName(existingExecutable))) {
                 candidates.add(existingExecutable.trim());
             }
-            candidates.add("gemini");
         } else {
             if (existingExecutable != null && !existingExecutable.isBlank()) {
                 candidates.add(existingExecutable.trim());
@@ -375,12 +373,6 @@ public final class EnvironmentAutoDetector {
         if ("agy".equals(canonical)) {
             if (existing.isBlank() || existing.contains("-o ") || existing.contains("-p \"\"") || !existing.contains("{prompt}")) {
                 return AGY_DEFAULT_ARGS;
-            }
-            return existing;
-        }
-        if ("gemini".equals(canonical)) {
-            if (existing.isBlank() || existing.contains("--disable-slash-commands") || existing.equals("-p \"\" -o text")) {
-                return "-p \"\" --output-format text";
             }
             return existing;
         }

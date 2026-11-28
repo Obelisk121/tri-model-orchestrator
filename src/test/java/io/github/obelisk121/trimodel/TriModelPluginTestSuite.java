@@ -72,9 +72,9 @@ public final class TriModelPluginTestSuite {
         runTest("Bearer OAuth headers on ClaudeClient & GeminiClient", TriModelPluginTestSuite::testOAuthBearerHeaders);
         runTest("Agent Independence Skills (anti-sycophancy, topic matrix, blind peer labels, contradiction guard)", TriModelPluginTestSuite::testAgentIndependenceSkills);
         runTest("Dynamic Model Discovery via REST APIs (Anthropic, OpenAI, Gemini + pagination/filtering)", TriModelPluginTestSuite::testRestApiModelDiscovery);
-        runTest("Dynamic Model Discovery via CLIs (gemini, agy, codex, claude) & no hardcoded presets", TriModelPluginTestSuite::testCliModelDiscoveryAndNoHardcodedModels);
-        runTest("CLI Auth, agy/gemini/codex/claude arg normalization, Codex error extraction & Gemini sign-out", TriModelPluginTestSuite::testCliAuthNormalizationAndSignOut);
-        runTest("Settings auto-migration for agy CLI args & legacy hardcoded CLI models", TriModelPluginTestSuite::testSettingsMigration);
+        runTest("Dynamic Model Discovery via CLIs (agy, codex, claude) & no hardcoded presets", TriModelPluginTestSuite::testCliModelDiscoveryAndNoHardcodedModels);
+        runTest("CLI Auth, agy/codex/claude arg normalization, Codex error extraction & duplicate-tab guard", TriModelPluginTestSuite::testCliAuthNormalizationAndSignOut);
+        runTest("Settings auto-migration from retired gemini CLI to Antigravity (agy)", TriModelPluginTestSuite::testSettingsMigration);
         runTest("Cross-platform PATH, executable & install-hint detection (Linux, Windows, macOS)", TriModelPluginTestSuite::testCrossPlatformPathAndExecutableDetection);
         runTest("EnvironmentAutoDetector (signed-in CLI, agy fallback, env base URLs & first-run preservation)", TriModelPluginTestSuite::testEnvironmentAutoDetector);
 
@@ -294,12 +294,6 @@ public final class TriModelPluginTestSuite {
         List<String> codexArgs = CliModelClient.normalizeArgsForProvider(ModelProviderType.CHATGPT, List.of("exec", "-"));
         assertTrue(codexArgs.contains("--skip-git-repo-check"), "Codex exec auto-injects --skip-git-repo-check");
         assertTrue(codexArgs.contains("--color") && codexArgs.contains("never"), "Codex exec auto-injects --color never");
-
-        // Verify Gemini settings.json OAuth mode switcher preserves existing keys
-        String patchedGemini = CliModelClient.patchGeminiSettingsForOAuth(
-                "{\"general\":{\"enabled\":true},\"security\":{\"auth\":{\"selectedType\":\"gemini-api-key\"}}}");
-        assertTrue(patchedGemini.contains("\"oauth-personal\""), "Gemini settings patched to oauth-personal");
-        assertTrue(patchedGemini.contains("\"general\""), "Existing Gemini settings preserved");
 
         CliModelClient stdinCli = new CliModelClient(
                 ModelProviderType.CLAUDE,
@@ -830,13 +824,8 @@ public final class TriModelPluginTestSuite {
         assertTrue(!emptyResp.success() && emptyResp.errorMessage().contains("Refresh Models"),
                 "Empty REST model ID produces clear Refresh Models prompt");
 
-        // Gemini CLI JSON discovery
+        // CLI discovery for Antigravity (agy), Codex, and Claude
         ModelDiscoveryService cliDiscovery = new ModelDiscoveryService(null, (exe, args, timeout, cancel) -> {
-            if ("gemini".equals(exe) && args.equals(List.of("models", "-o", "json"))) {
-                return new CliModelClient.CliCommandResult(0,
-                        "[{\"modelId\":\"auto\",\"displayName\":\"Auto\"},{\"modelId\":\"gemini-2.5-pro\",\"displayName\":\"gemini-2.5-pro\"}]",
-                        "", false, false, null);
-            }
             if ("agy".equals(exe) && args.equals(List.of("models"))) {
                 // Covers both non-TTY single-tab output and TTY multi-space output
                 String agyOut = "claude-opus-5-5-high\tClaude Opus 5.5 (High)\n"
@@ -861,13 +850,7 @@ public final class TriModelPluginTestSuite {
 
         ProviderConfig gemCliCfg = ProviderConfig.defaultsFor(ModelProviderType.GEMINI);
         gemCliCfg.connectionMode = ConnectionMode.LOCAL_CLI;
-        gemCliCfg.cliExecutable = "gemini";
-        ModelDiscoveryService.DiscoveryResult gemCliRes = cliDiscovery.fetchAvailableModels(
-                ModelProviderType.GEMINI, gemCliCfg, "", true, () -> false);
-        assertTrue(gemCliRes.success(), "gemini CLI discovery succeeded");
-        assertEquals(List.of("auto", "gemini-2.5-pro"), gemCliRes.modelIds(), "gemini CLI live models");
-
-        gemCliCfg.cliExecutable = "agy";
+        assertEquals("agy", gemCliCfg.effectiveCliExecutable(ModelProviderType.GEMINI), "Gemini defaults to Antigravity agy CLI");
         ModelDiscoveryService.DiscoveryResult agyRes = cliDiscovery.fetchAvailableModels(
                 ModelProviderType.GEMINI, gemCliCfg, "", true, () -> false);
         assertTrue(agyRes.success(), "agy CLI discovery succeeded");
@@ -893,7 +876,7 @@ public final class TriModelPluginTestSuite {
                 "claude CLI uses account auto default when no API key is set");
     }
 
-    private static void testCliAuthNormalizationAndSignOut() throws Exception {
+    private static void testCliAuthNormalizationAndSignOut() {
         // 1. agy must NEVER receive -o or empty -p ""; must receive --output-format text --model <m> -p {prompt}
         List<String> agyNormalized = CliModelClient.normalizeArgsForExecution(
                 ModelProviderType.GEMINI, "agy", List.of("-p", "", "-o", "text"), "gemini-4-neon-high");
@@ -902,15 +885,7 @@ public final class TriModelPluginTestSuite {
         assertTrue(agyNormalized.contains("--model") && agyNormalized.contains("gemini-4-neon-high"), "agy passes selected --model");
         assertTrue(agyNormalized.contains("{prompt}"), "agy injects prompt via -p {prompt}");
 
-        // 2. gemini replaces -o with --output-format and injects -m only for concrete models
-        List<String> gemAuto = CliModelClient.normalizeArgsForExecution(
-                ModelProviderType.GEMINI, "gemini", List.of("-p", "", "-o", "text"), "auto");
-        assertTrue(!gemAuto.contains("-m") && gemAuto.contains("--output-format"), "gemini auto omits -m and normalizes -o");
-        List<String> gemPinned = CliModelClient.normalizeArgsForExecution(
-                ModelProviderType.GEMINI, "gemini", List.of("-p", "", "-o", "text"), "gemini-2.5-pro");
-        assertTrue(gemPinned.contains("-m") && gemPinned.contains("gemini-2.5-pro"), "gemini passes concrete -m model");
-
-        // 3. codex injects -m right after exec + --skip-git-repo-check + --ephemeral + --color never
+        // 2. codex injects -m right after exec + --skip-git-repo-check + --ephemeral + --color never
         List<String> codexPinned = CliModelClient.normalizeArgsForExecution(
                 ModelProviderType.CHATGPT, "codex", List.of("exec", "-"), "gpt-6.2-sol");
         assertEquals("exec", codexPinned.get(0), "codex starts with exec");
@@ -918,12 +893,12 @@ public final class TriModelPluginTestSuite {
         assertTrue(codexPinned.contains("--skip-git-repo-check") && codexPinned.contains("--ephemeral"), "codex safety flags");
         assertEquals("-", codexPinned.get(codexPinned.size() - 1), "codex stdin sentinel stays last");
 
-        // 4. claude appends --model for concrete model and omits for auto
+        // 3. claude appends --model for concrete model and omits for auto
         List<String> claudePinned = CliModelClient.normalizeArgsForExecution(
                 ModelProviderType.CLAUDE, "claude", List.of("-p", "--output-format", "text"), "claude-sonnet-5-5");
         assertTrue(claudePinned.contains("--model") && claudePinned.contains("claude-sonnet-5-5"), "claude passes --model");
 
-        // 5. Codex banner stripping surfaces the actual error instead of truncating the startup header
+        // 4. Codex banner stripping surfaces the actual error instead of truncating the startup header
         String codexStderr = """
                 OpenAI Codex v0.164.0
                 --------
@@ -937,7 +912,7 @@ public final class TriModelPluginTestSuite {
         assertTrue(extracted.contains("not available on your current plan"), "Codex real error extracted: " + extracted);
         assertTrue(!extracted.contains("workdir:"), "Codex startup banner stripped: " + extracted);
 
-        // 6. Never open duplicate browser tabs for claude/codex/gemini native browser logins,
+        // 5. Never open duplicate browser tabs for claude/codex native browser logins,
         //    and never open Claude's manual paste-code fallback URL (/oauth/code/callback)
         assertTrue(!CliModelClient.shouldAutoOpenPrintedUrl(
                 "codex",
@@ -960,64 +935,26 @@ public final class TriModelPluginTestSuite {
                 "https://claude.com/cai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback"),
                 "Claude manual /oauth/code/callback URL is never auto-opened");
         assertTrue(!CliModelClient.shouldAutoOpenPrintedUrl(
-                "gemini",
-                "Attempting to open authentication page in your browser.\nhttps://accounts.google.com/o/oauth2/v2/auth?client_id=x",
+                "agy",
+                "Opening browser for Google Sign-In...\nhttps://accounts.google.com/o/oauth2/v2/auth?client_id=x",
                 "https://accounts.google.com/o/oauth2/v2/auth?client_id=x"),
-                "Gemini must NOT open a duplicate tab when gemini CLI opens browser natively");
-        assertTrue(CliModelClient.shouldAutoOpenPrintedUrl(
-                "gemini",
-                "Failed to open browser with error: ENOENT\nhttps://accounts.google.com/o/oauth2/v2/auth?client_id=x",
-                "https://accounts.google.com/o/oauth2/v2/auth?client_id=x"),
-                "Gemini falls back to BrowserUtil if native open fails");
+                "Antigravity agy does not open duplicate tab when opening browser natively");
 
-        // 7. Gemini CLI headless trust environment variable (prevents exit code 55 outside trusted folders)
-        Map<String, String> gemExecEnv = new java.util.LinkedHashMap<>();
-        gemExecEnv.put("GEMINI_API_KEY", "keep-on-exec");
-        gemExecEnv.put("GEMINI_RESTRICTED_MODE", "true");
-        CliModelClient.applyProviderCliEnvironment("gemini", gemExecEnv, false);
-        assertEquals("true", gemExecEnv.get("GEMINI_CLI_TRUST_WORKSPACE"), "Gemini CLI sets GEMINI_CLI_TRUST_WORKSPACE=true");
-        assertTrue(!gemExecEnv.containsKey("GEMINI_RESTRICTED_MODE"), "Gemini CLI clears GEMINI_RESTRICTED_MODE");
-        assertEquals("keep-on-exec", gemExecEnv.get("GEMINI_API_KEY"), "Non-login exec preserves GEMINI_API_KEY");
-
-        Map<String, String> gemLoginEnv = new java.util.LinkedHashMap<>();
-        gemLoginEnv.put("GEMINI_API_KEY", "stale-key");
-        gemLoginEnv.put("GOOGLE_API_KEY", "stale-google-key");
-        gemLoginEnv.put("NO_BROWSER", "true");
-        CliModelClient.applyProviderCliEnvironment("gemini", gemLoginEnv, true);
-        assertEquals("true", gemLoginEnv.get("GEMINI_CLI_TRUST_WORKSPACE"), "Gemini login sets GEMINI_CLI_TRUST_WORKSPACE=true");
-        assertTrue(!gemLoginEnv.containsKey("GEMINI_API_KEY") && !gemLoginEnv.containsKey("GOOGLE_API_KEY")
-                && !gemLoginEnv.containsKey("NO_BROWSER"), "Gemini OAuth login strips interfering env vars");
-
-        // 8. Gemini CLI sign-out support and credential file cleanup
-        assertTrue(CliModelClient.supportsCliLogout(ModelProviderType.GEMINI, "gemini"), "gemini CLI supports Sign Out");
-        assertTrue(!CliModelClient.supportsCliLogout(ModelProviderType.GEMINI, "agy"), "agy CLI hides unsupported direct Sign Out");
+        // 6. CLI sign-out support
+        assertTrue(!CliModelClient.supportsCliLogout(ModelProviderType.GEMINI, "agy"), "agy CLI uses /logout in Terminal");
         assertTrue(CliModelClient.supportsCliLogout(ModelProviderType.CLAUDE, "claude"), "claude CLI supports Sign Out");
         assertTrue(CliModelClient.supportsCliLogout(ModelProviderType.CHATGPT, "codex"), "codex CLI supports Sign Out");
-
-        Path tmpGemDir = Files.createTempDirectory("trimodel-gemini-test-");
-        try {
-            Files.writeString(tmpGemDir.resolve("oauth_creds.json"), "{\"access_token\":\"tok123\"}", StandardCharsets.UTF_8);
-            Files.writeString(tmpGemDir.resolve("google_accounts.json"), "{\"active\":\"dev@example.com\",\"old\":[]}", StandardCharsets.UTF_8);
-            boolean cleared = CliModelClient.clearGeminiOAuthCredentials(tmpGemDir);
-            assertTrue(cleared, "clearGeminiOAuthCredentials reports credentials removed");
-            assertTrue(!Files.exists(tmpGemDir.resolve("oauth_creds.json")), "oauth_creds.json deleted");
-            String accAfter = Files.readString(tmpGemDir.resolve("google_accounts.json"), StandardCharsets.UTF_8);
-            assertTrue(accAfter.contains("\"active\": null"), "google_accounts.json active user cleared: " + accAfter);
-        } finally {
-            Files.deleteIfExists(tmpGemDir.resolve("oauth_creds.json"));
-            Files.deleteIfExists(tmpGemDir.resolve("google_accounts.json"));
-            Files.deleteIfExists(tmpGemDir);
-        }
     }
 
     private static void testSettingsMigration() {
+        // Simulate IntelliJ XmlSerializer loading an older config whose schemaVersion was omitted or equal
         TriModelSettings settings = new TriModelSettings();
         TriModelSettings.State legacy = new TriModelSettings.State();
         legacy.schemaVersion = 0;
         legacy.gemini.connectionMode = ConnectionMode.LOCAL_CLI;
-        legacy.gemini.cliExecutable = "agy";
+        legacy.gemini.cliExecutable = "gemini";
         legacy.gemini.cliArgs = "-p \"\" -o text";
-        legacy.gemini.modelId = "gemini-4-neon";
+        legacy.gemini.modelId = "auto";
         legacy.gemini.oauthScopes = "https://www.googleapis.com/auth/generative-language";
         legacy.chatgpt.connectionMode = ConnectionMode.LOCAL_CLI;
         legacy.chatgpt.cliArgs = "exec -";
@@ -1027,9 +964,10 @@ public final class TriModelPluginTestSuite {
         ProviderConfig migratedGem = settings.getProviderConfig(ModelProviderType.GEMINI);
         ProviderConfig migratedGpt = settings.getProviderConfig(ModelProviderType.CHATGPT);
 
+        assertEquals("agy", migratedGem.cliExecutable, "Retired legacy gemini CLI unconditionally migrated to agy");
         assertTrue(!migratedGem.cliArgs.contains("-o "), "Migrated agy args remove -o: " + migratedGem.cliArgs);
         assertTrue(migratedGem.cliArgs.contains("{prompt}"), "Migrated agy args include {prompt}: " + migratedGem.cliArgs);
-        assertEquals("", migratedGem.modelId, "Legacy hardcoded CLI model cleared for Gemini");
+        assertEquals("", migratedGem.modelId, "Legacy gemini CLI model cleared for live agy discovery");
         assertEquals("", migratedGpt.modelId, "Legacy hardcoded CLI model cleared for ChatGPT");
         assertTrue(migratedGpt.cliArgs.contains("--skip-git-repo-check"), "Legacy Codex args migrated");
         assertTrue(migratedGem.oauthScopes.contains("cloud-platform"), "Legacy Gemini OAuth scope migrated");

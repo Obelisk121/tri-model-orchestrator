@@ -42,7 +42,6 @@ public final class ModelDiscoveryService {
     private static final int CLI_TIMEOUT_SECONDS = 20;
 
     private static final Pattern AGY_MODEL_LINE = Pattern.compile("^\\s*([A-Za-z0-9][A-Za-z0-9._:/-]*)(?:\\t+|\\s{2,})(.+?)\\s*$");
-    private static final Pattern GEMINI_TEXT_MODEL_LINE = Pattern.compile("^([A-Za-z0-9][A-Za-z0-9._:/-]*)\\s+\\(([^)]+)\\)\\s*$");
     private static final Pattern VERSION_NUMBER_PATTERN = Pattern.compile("(\\d+)(?:\\.(\\d+))?");
 
     private static final Map<String, DiscoveryResult> CACHE = new ConcurrentHashMap<>();
@@ -356,44 +355,22 @@ public final class ModelDiscoveryService {
         String exe = config.effectiveCliExecutable(type);
         String canonical = CliModelClient.canonicalCliName(exe);
 
-        if ("gemini".equals(canonical)) {
-            CliModelClient.CliCommandResult jsonRes = cliRunner.run(exe, List.of("models", "-o", "json"), CLI_TIMEOUT_SECONDS, isCancelled);
-            if (jsonRes.launchError() == null && jsonRes.exitCode() == 0) {
-                List<DiscoveredModel> models = parseGeminiCliModelsJson(jsonRes.stdout());
-                if (!models.isEmpty()) {
-                    return DiscoveryResult.ok(models, "gemini CLI");
-                }
-            }
-            CliModelClient.CliCommandResult textRes = cliRunner.run(exe, List.of("--list-models"), CLI_TIMEOUT_SECONDS, isCancelled);
-            if (textRes.launchError() == null && textRes.exitCode() == 0) {
-                List<DiscoveredModel> models = parseGeminiCliModelsText(textRes.stdout());
-                if (!models.isEmpty()) {
-                    return DiscoveryResult.ok(models, "gemini CLI");
-                }
-            }
-            String fallbackKey = resolveFallbackApiKey(type, apiKeyOverride);
-            if (!fallbackKey.isBlank()) {
-                return fetchGeminiModels(config.effectiveBaseUrl(type), fallbackKey, false, isCancelled);
-            }
-            String err = jsonRes.launchError() != null ? jsonRes.launchError()
-                    : CliModelClient.extractCliErrorDetail(type, exe, jsonRes.stderr(), jsonRes.stdout());
-            return DiscoveryResult.error(err.isBlank()
-                    ? "Could not list Gemini CLI models. Sign in first or click Refresh."
-                    : err);
-        }
-
         if ("agy".equals(canonical)) {
             CliModelClient.CliCommandResult res = cliRunner.run(exe, List.of("models"), CLI_TIMEOUT_SECONDS, isCancelled);
             if (res.launchError() == null && res.exitCode() == 0) {
                 List<DiscoveredModel> models = parseAgyCliModelsText(res.stdout(), type);
                 if (!models.isEmpty()) {
-                    return DiscoveryResult.ok(models, "agy CLI");
+                    return DiscoveryResult.ok(models, "Antigravity (agy) CLI");
                 }
+            }
+            String fallbackKey = resolveFallbackApiKey(type, apiKeyOverride);
+            if (!fallbackKey.isBlank()) {
+                return discoverFromRestApi(type, config, fallbackKey, false, isCancelled);
             }
             String err = res.launchError() != null ? res.launchError()
                     : CliModelClient.extractCliErrorDetail(type, exe, res.stderr(), res.stdout());
             return DiscoveryResult.error(err.isBlank()
-                    ? "Could not list models from agy CLI. Sign in via agy first."
+                    ? "Could not list models from Antigravity (agy) CLI. Sign in via agy first."
                     : err);
         }
 
@@ -633,57 +610,6 @@ public final class ModelDiscoveryService {
             return new GeminiModelsPage(List.of(), "");
         }
         return new GeminiModelsPage(preferred.isEmpty() ? fallbackAll : preferred, nextPageToken);
-    }
-
-    public static List<DiscoveredModel> parseGeminiCliModelsJson(String stdout) {
-        if (stdout == null || stdout.isBlank()) {
-            return List.of();
-        }
-        String cleaned = CliModelClient.stripAnsiAndControl(stdout).trim();
-        int arrStart = cleaned.indexOf('[');
-        int arrEnd = cleaned.lastIndexOf(']');
-        if (arrStart < 0 || arrEnd <= arrStart) {
-            return List.of();
-        }
-        Map<String, DiscoveredModel> out = new LinkedHashMap<>();
-        try {
-            JsonArray arr = JsonParser.parseString(cleaned.substring(arrStart, arrEnd + 1)).getAsJsonArray();
-            for (JsonElement el : arr) {
-                if (!el.isJsonObject()) continue;
-                JsonObject obj = el.getAsJsonObject();
-                String id = HttpTransport.getString(obj, "modelId");
-                if (id.isBlank()) id = HttpTransport.getString(obj, "id");
-                if (id.isBlank()) continue;
-                String display = HttpTransport.getString(obj, "displayName");
-                if (display.isBlank()) display = HttpTransport.getString(obj, "name");
-                out.putIfAbsent(id, new DiscoveredModel(id, display));
-            }
-        } catch (Exception ignored) {
-            return List.of();
-        }
-        return new ArrayList<>(out.values());
-    }
-
-    public static List<DiscoveredModel> parseGeminiCliModelsText(String stdout) {
-        if (stdout == null || stdout.isBlank()) {
-            return List.of();
-        }
-        String cleaned = CliModelClient.stripAnsiAndControl(stdout);
-        Map<String, DiscoveredModel> out = new LinkedHashMap<>();
-        for (String line : cleaned.split("\\R")) {
-            String trimmed = line.trim();
-            if (trimmed.isBlank() || trimmed.startsWith("Available ") || trimmed.startsWith("Description:")
-                    || trimmed.startsWith("Context limit:")) {
-                continue;
-            }
-            Matcher m = GEMINI_TEXT_MODEL_LINE.matcher(trimmed);
-            if (m.matches()) {
-                String id = m.group(1).trim();
-                String display = m.group(2).trim();
-                out.putIfAbsent(id, new DiscoveredModel(id, display));
-            }
-        }
-        return new ArrayList<>(out.values());
     }
 
     public static List<DiscoveredModel> parseAgyCliModelsText(String stdout, ModelProviderType provider) {

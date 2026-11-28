@@ -12,7 +12,6 @@ import io.github.obelisk121.trimodel.model.ModelProviderType;
 import io.github.obelisk121.trimodel.model.OrchestrationMode;
 import io.github.obelisk121.trimodel.model.RoleAssignment;
 import io.github.obelisk121.trimodel.provider.CliModelClient;
-import io.github.obelisk121.trimodel.provider.EnvironmentAutoDetector;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -31,7 +30,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 )
 public final class TriModelSettings implements PersistentStateComponent<TriModelSettings.State> {
 
-    private static final int CURRENT_SCHEMA_VERSION = 4;
+    private static final int CURRENT_SCHEMA_VERSION = 5;
     private static final Set<String> LEGACY_HARDCODED_DEFAULTS = Set.of(
             "claude-sonnet-5-5",
             "gpt-6.2-sol",
@@ -47,7 +46,8 @@ public final class TriModelSettings implements PersistentStateComponent<TriModel
     );
 
     public static class State {
-        public int schemaVersion = CURRENT_SCHEMA_VERSION;
+        // Default to 0 so IntelliJ XmlSerializer always persists explicit migrated schema versions
+        public int schemaVersion = 0;
         public boolean autoDetectedOnce = false;
         public ProviderConfig claude = ProviderConfig.defaultsFor(ModelProviderType.CLAUDE);
         public ProviderConfig chatgpt = ProviderConfig.defaultsFor(ModelProviderType.CHATGPT);
@@ -114,34 +114,30 @@ public final class TriModelSettings implements PersistentStateComponent<TriModel
         if ("exec -".equals(s.chatgpt.cliArgs != null ? s.chatgpt.cliArgs.trim() : "")) {
             s.chatgpt.cliArgs = ModelProviderType.CHATGPT.getDefaultCliArgs();
         }
-        // Auto-migrate legacy Gemini CLI args (-o -> --output-format; agy-safe args when configured as agy)
-        String gemArgs = s.gemini.cliArgs != null ? s.gemini.cliArgs.trim() : "";
-        if ("-p \"\" -o text".equals(gemArgs)) {
-            s.gemini.cliArgs = "-p \"\" --output-format text";
+        // Unconditionally migrate retired legacy 'gemini' CLI configs to Google Antigravity CLI ('agy')
+        String gemExeCanonical = CliModelClient.canonicalCliName(s.gemini.cliExecutable);
+        if (gemExeCanonical.isBlank() || "gemini".equals(gemExeCanonical)) {
+            s.gemini.cliExecutable = ModelProviderType.GEMINI.getDefaultCliExecutable();
+            s.gemini.cliArgs = ModelProviderType.GEMINI.getDefaultCliArgs();
+            if (s.gemini.modelId != null && LEGACY_GEMINI_CLI_MODELS.contains(s.gemini.modelId.trim())) {
+                s.gemini.modelId = "";
+            }
         }
+        // Ensure agy CLI args never contain legacy incompatible '-o' or empty '-p ""' flags
+        String gemArgs = s.gemini.cliArgs != null ? s.gemini.cliArgs.trim() : "";
         if ("agy".equals(CliModelClient.canonicalCliName(s.gemini.cliExecutable))
-                && (gemArgs.isBlank() || gemArgs.contains("-o ") || gemArgs.contains("-p \"\""))) {
-            s.gemini.cliArgs = EnvironmentAutoDetector.AGY_DEFAULT_ARGS;
+                && (gemArgs.isBlank() || gemArgs.contains("-o ") || gemArgs.contains("-p \"\"") || !gemArgs.contains("{prompt}"))) {
+            s.gemini.cliArgs = ModelProviderType.GEMINI.getDefaultCliArgs();
         }
         if ("https://www.googleapis.com/auth/generative-language".equals(
                 s.gemini.oauthScopes != null ? s.gemini.oauthScopes.trim() : "")) {
             s.gemini.oauthScopes = ModelProviderType.GEMINI.getDefaultOAuthScopes();
         }
-        // Migrate pre-v4 configs: clear legacy hardcoded CLI defaults and migrate deprecated individual
-        // gemini-cli OAuth setups to Antigravity CLI (agy) automatically when agy is installed.
+        // Clear legacy hardcoded CLI defaults when upgrading from older plugin versions
         if (s.schemaVersion < CURRENT_SCHEMA_VERSION) {
             clearLegacyHardcodedCliModel(s.claude);
             clearLegacyHardcodedCliModel(s.chatgpt);
             clearLegacyHardcodedCliModel(s.gemini);
-            if (s.gemini.connectionMode == ConnectionMode.LOCAL_CLI
-                    && "gemini".equals(CliModelClient.canonicalCliName(s.gemini.cliExecutable))
-                    && CliModelClient.resolveExecutable("agy") != null) {
-                s.gemini.cliExecutable = "agy";
-                s.gemini.cliArgs = EnvironmentAutoDetector.AGY_DEFAULT_ARGS;
-                if (s.gemini.modelId != null && LEGACY_GEMINI_CLI_MODELS.contains(s.gemini.modelId.trim())) {
-                    s.gemini.modelId = "";
-                }
-            }
             s.schemaVersion = CURRENT_SCHEMA_VERSION;
         }
         if (s.defaultMode == null) s.defaultMode = OrchestrationMode.PIPELINE;

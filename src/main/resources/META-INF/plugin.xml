@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>io.github.obelisk121.trimodel</id>
     <name>Tri-Model AI Orchestrator</name>
-    <version>1.4.2</version>
+    <version>1.5.0</version>
     <vendor email="oabaiadze@gmail.com" url="https://github.com/Obelisk121/tri-model-orchestrator">Oto Abaiadze</vendor>
     <idea-version since-build="242"/>
 
@@ -13,7 +13,7 @@
       <li><b>5 Multi-Model Orchestration Modes:</b> Role Pipeline (Architect &rarr; Coder &rarr; Reviewer &rarr; Finalizer), Iterative Write-Review-Fix Loop (Coder &harr; Dual Reviewers), Parallel Council &amp; Cross-Critique Consensus, Tri-Model Deep Code Audit, and Parallel Side-by-Side Comparison.</li>
       <li><b>Anti-Sycophancy &amp; Precision Agent Skills:</b> Enforces independent judgment (forbidding blind agreement), topic-by-topic peer verification tables (<code>[VERIFIED]</code>, <code>[DISPUTED]</code>, <code>[MISSING]</code>, <code>[UNPROVEN]</code>), blind anonymized peer handoffs, high-precision detail rules, optional Devil's Advocate stress-testing, and an engine-level contradiction guard against rubber-stamp approvals.</li>
       <li><b>Flexible Role Assignment:</b> Assign Claude, ChatGPT, or Gemini to any engineering role (Architect, Coder, Reviewer, Chair/Synthesizer).</li>
-      <li><b>Three Compliant Auth Modes per Model:</b> Official REST API Keys (stored in JetBrains PasswordSafe), <b>Temporary Browser OAuth 2.0 (PKCE + 127.0.0.1 loopback)</b> opening your default web browser with RAM-only sessions, or Local CLI tools (<code>claude</code>, <code>codex</code>, <code>gemini</code>).</li>
+      <li><b>Three Compliant Auth Modes per Model:</b> Official REST API Keys (stored in JetBrains PasswordSafe), <b>Temporary Browser OAuth 2.0 (PKCE + 127.0.0.1 loopback)</b> opening your default web browser with RAM-only sessions, or Local CLI tools (<code>claude</code>, <code>codex</code>, and Google Antigravity <code>agy</code>).</li>
       <li><b>Deep IDE Integration:</b> Attaches active files, code selections, extra workspace files, and live IDE inspection diagnostics; previews proposed edits in the native Diff Viewer; applies single- or multi-file changes atomically with full Undo support.</li>
     </ul>
     <br/>
@@ -23,6 +23,11 @@
     ]]></description>
 
     <change-notes><![CDATA[
+    <b>1.5.0</b>
+    <ul>
+      <li><b>Full Refactor to Google Antigravity CLI (<code>agy</code>):</b> Completely removed retired legacy <code>gemini</code> CLI code paths and workarounds in favor of Google Antigravity CLI (<code>agy</code>) for Google Gemini Browser Sign-In, live model discovery (<code>agy models</code> filtered to Gemini models), and non-interactive execution.</li>
+      <li><b>Fixed IntelliJ Settings Upgrade Migration:</b> Fixed <code>schemaVersion</code> XML serialization default so existing installations with saved <code>gemini</code> CLI configs unconditionally migrate to <code>agy</code> with clean arguments and live Gemini model selection on startup.</li>
+    </ul>
     <b>1.4.2</b>
     <ul>
       <li><b>Migrated default Google Gemini Browser Sign-In CLI to Antigravity (<code>agy</code>):</b> Google retired individual OAuth on legacy <code>gemini</code> CLI (<i>"This client is no longer supported for Gemini Code Assist for individuals. Please migrate to Antigravity"</i>). The plugin now defaults Google Gemini Browser Sign-In to <code>agy</code> (while keeping legacy <code>gemini</code> CLI supported), automatically migrates existing setups when <code>agy</code> is installed, verifies <code>agy</code> sign-in status live, and filters <code>agy models</code> to Gemini models under the Google Gemini provider.</li>
