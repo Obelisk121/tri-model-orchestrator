@@ -4,6 +4,12 @@ All notable changes to **Tri-Model AI Orchestrator** are documented in this file
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-11-28
+
+### Fixed
+- **Google Gemini CLI exit code 55 (`not running in a trusted directory`):** Sets `GEMINI_CLI_TRUST_WORKSPACE=true` (and clears `GEMINI_RESTRICTED_MODE`) on headless `gemini` CLI executions, model listing, and browser login subprocesses — fixing exit code 55 on Gemini CLI 0.71+ while staying backward-compatible with older Gemini CLI versions.
+- **Auto-replace unavailable legacy models in Settings:** When live model discovery completes in Settings and a previously saved model (such as a legacy hardcoded default) is not listed as available, Settings automatically selects the first live available model so **Test Connection** works immediately.
+
 ## [1.4.0] - 2026-11-28
 
 ### Added

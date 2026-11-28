@@ -969,7 +969,25 @@ public final class TriModelPluginTestSuite {
                 "https://accounts.google.com/o/oauth2/v2/auth?client_id=x"),
                 "Gemini falls back to BrowserUtil if native open fails");
 
-        // 7. Gemini CLI sign-out support and credential file cleanup
+        // 7. Gemini CLI headless trust environment variable (prevents exit code 55 outside trusted folders)
+        Map<String, String> gemExecEnv = new java.util.LinkedHashMap<>();
+        gemExecEnv.put("GEMINI_API_KEY", "keep-on-exec");
+        gemExecEnv.put("GEMINI_RESTRICTED_MODE", "true");
+        CliModelClient.applyProviderCliEnvironment("gemini", gemExecEnv, false);
+        assertEquals("true", gemExecEnv.get("GEMINI_CLI_TRUST_WORKSPACE"), "Gemini CLI sets GEMINI_CLI_TRUST_WORKSPACE=true");
+        assertTrue(!gemExecEnv.containsKey("GEMINI_RESTRICTED_MODE"), "Gemini CLI clears GEMINI_RESTRICTED_MODE");
+        assertEquals("keep-on-exec", gemExecEnv.get("GEMINI_API_KEY"), "Non-login exec preserves GEMINI_API_KEY");
+
+        Map<String, String> gemLoginEnv = new java.util.LinkedHashMap<>();
+        gemLoginEnv.put("GEMINI_API_KEY", "stale-key");
+        gemLoginEnv.put("GOOGLE_API_KEY", "stale-google-key");
+        gemLoginEnv.put("NO_BROWSER", "true");
+        CliModelClient.applyProviderCliEnvironment("gemini", gemLoginEnv, true);
+        assertEquals("true", gemLoginEnv.get("GEMINI_CLI_TRUST_WORKSPACE"), "Gemini login sets GEMINI_CLI_TRUST_WORKSPACE=true");
+        assertTrue(!gemLoginEnv.containsKey("GEMINI_API_KEY") && !gemLoginEnv.containsKey("GOOGLE_API_KEY")
+                && !gemLoginEnv.containsKey("NO_BROWSER"), "Gemini OAuth login strips interfering env vars");
+
+        // 8. Gemini CLI sign-out support and credential file cleanup
         assertTrue(CliModelClient.supportsCliLogout(ModelProviderType.GEMINI, "gemini"), "gemini CLI supports Sign Out");
         assertTrue(!CliModelClient.supportsCliLogout(ModelProviderType.GEMINI, "agy"), "agy CLI hides unsupported direct Sign Out");
         assertTrue(CliModelClient.supportsCliLogout(ModelProviderType.CLAUDE, "claude"), "claude CLI supports Sign Out");

@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>io.github.obelisk121.trimodel</id>
     <name>Tri-Model AI Orchestrator</name>
-    <version>1.4.0</version>
+    <version>1.4.1</version>
     <vendor email="oabaiadze@gmail.com" url="https://github.com/Obelisk121/tri-model-orchestrator">Oto Abaiadze</vendor>
     <idea-version since-build="242"/>
 
@@ -23,6 +23,11 @@
     ]]></description>
 
     <change-notes><![CDATA[
+    <b>1.4.1</b>
+    <ul>
+      <li><b>Fixed Gemini CLI exit code 55 (untrusted directory):</b> Sets <code>GEMINI_CLI_TRUST_WORKSPACE=true</code> on headless <code>gemini</code> CLI invocations so Test Connection, browser login, and orchestrations work cleanly from any working directory without requiring interactive folder trust.</li>
+      <li><b>Auto-replace unavailable legacy models in Settings:</b> When live model discovery runs and the previously saved model is not in the provider's available catalog (e.g. a legacy hardcoded default), Settings now automatically switches to an available live model so <b>Test Connection</b> succeeds immediately.</li>
+    </ul>
     <b>1.4.0</b>
     <ul>
       <li><b>Live API &amp; CLI Model Discovery (Zero Hardcoded Presets):</b> Replaced all hardcoded model lists with live model discovery via Anthropic <code>GET /v1/models</code>, OpenAI <code>GET /v1/models</code>, Google Gemini <code>GET /v1beta/models</code>, and official CLIs (<code>gemini models -o json</code>, <code>agy models</code>, <code>codex debug models</code>). Added a live <b>Model</b> picker &amp; <b>Refresh</b> button across Quick Setup and all Settings sign-in modes, with automatic API resolution when no model is pre-selected.</li>

@@ -30,7 +30,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 )
 public final class TriModelSettings implements PersistentStateComponent<TriModelSettings.State> {
 
-    private static final int CURRENT_SCHEMA_VERSION = 2;
+    private static final int CURRENT_SCHEMA_VERSION = 3;
     private static final Set<String> LEGACY_HARDCODED_DEFAULTS = Set.of(
             "claude-sonnet-5-5",
             "gpt-6.2-sol",

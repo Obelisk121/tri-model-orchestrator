@@ -140,6 +140,7 @@ public final class CliModelClient implements ModelClient {
             pb.directory(new File(userHome));
         }
         enrichPathForGuiApps(pb.environment());
+        applyProviderCliEnvironment(canonicalCliName(executable), pb.environment(), false);
 
         Process process;
         try {
@@ -238,6 +239,7 @@ public final class CliModelClient implements ModelClient {
             pb.directory(new File(userHome));
         }
         enrichPathForGuiApps(pb.environment());
+        applyProviderCliEnvironment(canonicalCliName(resolvedExe), pb.environment(), false);
 
         Process p;
         try {
@@ -579,13 +581,7 @@ public final class CliModelClient implements ModelClient {
             pb.directory(new File(userHome));
         }
         enrichPathForGuiApps(pb.environment());
-
-        if ("gemini".equals(canonical)) {
-            // Ensure stale API key or NO_BROWSER env vars do not block or bypass interactive Google OAuth login
-            pb.environment().remove("GEMINI_API_KEY");
-            pb.environment().remove("GOOGLE_API_KEY");
-            pb.environment().remove("NO_BROWSER");
-        }
+        applyProviderCliEnvironment(canonical, pb.environment(), true);
 
         try {
             status.accept("Starting browser sign-in for " + type.getShortName() + " (" + canonical + ")...");
@@ -1439,6 +1435,25 @@ public final class CliModelClient implements ModelClient {
         t.setDaemon(true);
         t.start();
         return t;
+    }
+
+    /**
+     * Applies CLI-specific environment variables required for headless execution from PyCharm.
+     * For Gemini CLI, sets GEMINI_CLI_TRUST_WORKSPACE=true so headless calls succeed outside
+     * interactively-trusted folders (preventing exit code 55) while remaining compatible with older versions.
+     */
+    public static void applyProviderCliEnvironment(String canonicalCli, Map<String, String> env, boolean oauthLoginFlow) {
+        if (env == null) return;
+        if ("gemini".equals(canonicalCli)) {
+            env.put("GEMINI_CLI_TRUST_WORKSPACE", "true");
+            env.remove("GEMINI_RESTRICTED_MODE");
+            if (oauthLoginFlow) {
+                // Ensure stale API key or NO_BROWSER env vars do not block or bypass interactive Google OAuth login
+                env.remove("GEMINI_API_KEY");
+                env.remove("GOOGLE_API_KEY");
+                env.remove("NO_BROWSER");
+            }
+        }
     }
 
     private static void enrichPathForGuiApps(Map<String, String> env) {

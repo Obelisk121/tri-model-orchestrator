@@ -755,25 +755,20 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                             comboModel.addElement(m.id());
                         }
                         boolean currentAvailable = !current.isBlank() && res.containsModelId(current);
-                        if (!currentAvailable && !current.isBlank() && !autoSelectIfInvalid) {
-                            // Keep previously saved selection on initial open so isModified() stays false,
-                            // while clearly flagging that it is not in the live catalog.
-                            comboModel.insertElementAt(current, 0);
-                            modelBox.setModel(comboModel);
+                        modelBox.setModel(comboModel);
+                        if (currentAvailable) {
                             modelBox.setSelectedItem(current);
-                            modelSourceLabel.setForeground(new JBColor(0xD97706, 0xF59E0B));
-                            modelSourceLabel.setText("Loaded " + res.models().size() + " model(s) from " + res.source()
-                                    + " — '" + current + "' was not listed; pick an available model above.");
+                            modelSourceLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
+                            modelSourceLabel.setText("Loaded " + res.models().size() + " available model(s) from " + res.source() + ".");
+                        } else if (!current.isBlank()) {
+                            String fallback = res.models().get(0).id();
+                            modelBox.setSelectedItem(fallback);
+                            modelSourceLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
+                            modelSourceLabel.setText("Switched from unavailable '" + current + "' to '" + fallback
+                                    + "' (" + res.models().size() + " live from " + res.source() + ") — click Apply/OK to save.");
                         } else {
-                            modelBox.setModel(comboModel);
-                            if (currentAvailable) {
-                                modelBox.setSelectedItem(current);
-                            } else if (autoSelectIfInvalid || !current.isBlank()) {
-                                modelBox.setSelectedItem(res.models().get(0).id());
-                            } else {
-                                // Saved model was blank on initial load: preserve blank until user picks or clicks Refresh
-                                modelBox.setSelectedItem(autoSelectIfInvalid ? res.models().get(0).id() : "");
-                            }
+                            // Saved model was blank on initial load: preserve blank unless user clicked Refresh/switched mode
+                            modelBox.setSelectedItem(autoSelectIfInvalid ? res.models().get(0).id() : "");
                             modelSourceLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
                             modelSourceLabel.setText("Loaded " + res.models().size() + " available model(s) from " + res.source() + ".");
                         }
