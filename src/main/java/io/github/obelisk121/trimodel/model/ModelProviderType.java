@@ -49,11 +49,11 @@ public enum ModelProviderType {
             "GEMINI_API_KEY",
             "https://aistudio.google.com/apikey",
             "https://console.cloud.google.com/apis/credentials",
-            "gemini",
-            "-p \"\" --output-format text",
-            "-p \"Reply OK\" --output-format text",
+            "agy",
+            "--output-format text --disable-slash-commands -p \"{prompt}\"",
+            "--output-format text --disable-slash-commands -p \"Reply OK\"",
             "",
-            "npm install -g @google/gemini-cli",
+            "curl -fsSL https://antigravity.google/cli/install.sh | bash",
             "https://accounts.google.com/o/oauth2/v2/auth",
             "https://oauth2.googleapis.com/token",
             "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/generative-language.retriever",
@@ -187,7 +187,9 @@ public enum ModelProviderType {
                 yield "curl -fsSL https://claude.ai/install.sh | bash";
             }
             case CHATGPT -> "npm install -g @openai/codex";
-            case GEMINI -> "npm install -g @google/gemini-cli";
+            case GEMINI -> isWin
+                    ? "irm https://antigravity.google/cli/install.ps1 | iex"
+                    : "curl -fsSL https://antigravity.google/cli/install.sh | bash";
         };
     }
 

@@ -194,6 +194,13 @@ public final class CliModelClient implements ModelClient {
 
             if (exitCode != 0) {
                 String detail = extractCliErrorDetail(providerType, executable, errText, outputText);
+                if ("gemini".equals(canonicalCliName(executable))
+                        && (detail.toLowerCase(Locale.ROOT).contains("no longer supported")
+                        || detail.toLowerCase(Locale.ROOT).contains("antigravity"))) {
+                    detail += resolveExecutable("agy") != null
+                            ? " — Click 'Auto-Detect All' or switch Gemini CLI executable to 'agy' (already installed)."
+                            : " — Install Google Antigravity CLI ('agy'): " + ModelProviderType.GEMINI.getCliInstallHint();
+                }
                 if (detail.length() > 500) {
                     detail = detail.substring(0, 500) + "...";
                 }
@@ -344,6 +351,23 @@ public final class CliModelClient implements ModelClient {
         }
 
         if ("agy".equals(canonical)) {
+            CliCommandResult res = runUtilityCommand(resolved, List.of("models"), 10, () -> false);
+            if (res.launchError() == null && res.exitCode() == 0) {
+                List<ModelDiscoveryService.DiscoveredModel> models =
+                        ModelDiscoveryService.parseAgyCliModelsText(res.stdout(), type);
+                if (!models.isEmpty()) {
+                    return new CliAuthStatus(true, resolved, AuthState.SIGNED_IN,
+                            "agy CLI signed in (" + models.size() + " " + type.getShortName() + " models)");
+                }
+            }
+            if (res.launchError() == null && res.exitCode() != 0) {
+                String errLower = stripAnsiAndControl(res.stderr() + " " + res.stdout()).toLowerCase(Locale.ROOT);
+                if (errLower.contains("auth") || errLower.contains("login") || errLower.contains("sign in")
+                        || errLower.contains("unauthorized") || errLower.contains("unauthenticated")) {
+                    return new CliAuthStatus(true, resolved, AuthState.SIGNED_OUT,
+                            "agy CLI installed — sign in required");
+                }
+            }
             return new CliAuthStatus(true, resolved, AuthState.UNKNOWN, "agy CLI ready");
         }
 
@@ -878,7 +902,7 @@ public final class CliModelClient implements ModelClient {
 
         if ("gemini".equals(canonical)) {
             if (out.isEmpty()) {
-                out.addAll(tokenizeArgs(ModelProviderType.GEMINI.getDefaultCliArgs()));
+                out.addAll(List.of("-p", "", "--output-format", "text"));
             }
             for (int i = 0; i < out.size(); i++) {
                 if ("-o".equals(out.get(i))) {

@@ -76,7 +76,7 @@ public final class QuickSetupDialog extends DialogWrapper {
         JPanel top = new JPanel(new BorderLayout(0, 6));
         JBLabel intro = new JBLabel(
                 "<html>Connect all three models on one screen: choose <b>Browser Sign-In</b> (uses official "
-                        + "<code>claude</code>, <code>codex</code>, <code>gemini</code>/<code>agy</code> CLIs — no Client ID needed) "
+                        + "<code>claude</code>, <code>codex</code>, <code>agy</code>/<code>gemini</code> CLIs — no Client ID needed) "
                         + "or paste an <b>API Key</b>. Available models are fetched live from each provider.</html>");
         top.add(intro, BorderLayout.CENTER);
 

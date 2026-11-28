@@ -4,6 +4,14 @@ All notable changes to **Tri-Model AI Orchestrator** are documented in this file
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-11-28
+
+### Changed & Fixed
+- **Google Gemini Default Browser Sign-In CLI -> Antigravity (`agy`):** Google deprecated individual OAuth on legacy `gemini` CLI (*"This client is no longer supported for Gemini Code Assist for individuals. Please migrate to the Antigravity suite of products"*).
+  - Made `agy` (Google Antigravity CLI) the primary default CLI for Google Gemini Browser Sign-In across Linux, Windows, and macOS (with official `antigravity.google/cli/install.{sh,ps1}` install commands and legacy `gemini` CLI retained as a fallback/selectable option).
+  - Updated `EnvironmentAutoDetector` and `TriModelSettings` (schema v4) to prioritize `agy` over legacy `gemini` and automatically migrate existing `gemini` CLI configs to `agy` when `agy` is installed.
+  - Added live `agy` sign-in verification via `agy models` and scoped `agy` model discovery to `gemini-*` models under the Google Gemini provider tab.
+
 ## [1.4.1] - 2026-11-28
 
 ### Fixed

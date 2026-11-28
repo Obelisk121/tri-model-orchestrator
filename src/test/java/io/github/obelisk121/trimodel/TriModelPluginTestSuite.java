@@ -872,7 +872,8 @@ public final class TriModelPluginTestSuite {
                 ModelProviderType.GEMINI, gemCliCfg, "", true, () -> false);
         assertTrue(agyRes.success(), "agy CLI discovery succeeded");
         assertEquals("gemini-4-neon-high", agyRes.models().get(0).id(), "agy prioritizes Gemini models for Gemini provider");
-        assertTrue(agyRes.containsModelId("claude-opus-5-5-high"), "agy retains all live available models");
+        assertTrue(!agyRes.containsModelId("claude-opus-5-5-high"),
+                "agy filters to Gemini models under Google Gemini provider");
 
         ProviderConfig codexCfg = ProviderConfig.defaultsFor(ModelProviderType.CHATGPT);
         codexCfg.connectionMode = ConnectionMode.LOCAL_CLI;
@@ -1113,6 +1114,9 @@ public final class TriModelPluginTestSuite {
         assertTrue(ModelProviderType.CLAUDE.getCliInstallHint("Windows 11").contains("install.ps1"), "Windows Claude PowerShell install hint");
         assertTrue(ModelProviderType.CLAUDE.getCliInstallHint("Linux").contains("install.sh"), "Linux Claude shell install hint");
         assertTrue(ModelProviderType.CLAUDE.getCliInstallHint("Mac OS X").contains("brew"), "macOS Claude Homebrew install hint");
+        assertTrue(ModelProviderType.GEMINI.getCliInstallHint("Windows 11").contains("antigravity.google/cli/install.ps1"), "Windows Gemini Antigravity CLI install hint");
+        assertTrue(ModelProviderType.GEMINI.getCliInstallHint("Linux").contains("antigravity.google/cli/install.sh"), "Linux Gemini Antigravity CLI install hint");
+        assertTrue(ModelProviderType.GEMINI.getCliInstallHint("Mac OS X").contains("antigravity.google/cli/install.sh"), "macOS Gemini Antigravity CLI install hint");
     }
 
     private static void testEnvironmentAutoDetector() {

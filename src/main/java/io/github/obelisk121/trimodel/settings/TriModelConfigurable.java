@@ -509,13 +509,10 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                 testStatusLabel.setText("Copied: " + type.getCliInstallHint());
             });
             cliRecheckBtn.addActionListener(e -> {
-                // Auto-adapt CLI arguments when user switches Gemini executable to 'agy'
+                // Auto-adapt CLI arguments when user switches executable (e.g., agy <-> gemini)
                 String exe = cliExecutableField.getText().trim();
                 String currentArgs = cliArgsField.getText().trim();
-                if ("agy".equals(CliModelClient.canonicalCliName(exe))
-                        && (currentArgs.isBlank() || currentArgs.contains("-o ") || currentArgs.contains("-p \"\""))) {
-                    cliArgsField.setText("--output-format text --disable-slash-commands -p \"{prompt}\"");
-                }
+                cliArgsField.setText(EnvironmentAutoDetector.defaultArgsForExecutable(type, exe, currentArgs));
                 refreshCliDetection();
                 refreshModelsAsync(true, true);
             });

@@ -725,10 +725,11 @@ public final class ModelDiscoveryService {
             }
         }
 
-        List<DiscoveredModel> ordered = new ArrayList<>(primary.size() + secondary.size());
-        ordered.addAll(primary);
-        ordered.addAll(secondary);
-        return ordered;
+        // Keep provider-matching models cleanly scoped (e.g., Gemini models under the Google Gemini tab)
+        if (!primary.isEmpty()) {
+            return primary;
+        }
+        return secondary;
     }
 
     public static List<DiscoveredModel> parseCodexDebugModelsJson(String stdout) {

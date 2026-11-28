@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>io.github.obelisk121.trimodel</id>
     <name>Tri-Model AI Orchestrator</name>
-    <version>1.4.1</version>
+    <version>1.4.2</version>
     <vendor email="oabaiadze@gmail.com" url="https://github.com/Obelisk121/tri-model-orchestrator">Oto Abaiadze</vendor>
     <idea-version since-build="242"/>
 
@@ -23,6 +23,10 @@
     ]]></description>
 
     <change-notes><![CDATA[
+    <b>1.4.2</b>
+    <ul>
+      <li><b>Migrated default Google Gemini Browser Sign-In CLI to Antigravity (<code>agy</code>):</b> Google retired individual OAuth on legacy <code>gemini</code> CLI (<i>"This client is no longer supported for Gemini Code Assist for individuals. Please migrate to Antigravity"</i>). The plugin now defaults Google Gemini Browser Sign-In to <code>agy</code> (while keeping legacy <code>gemini</code> CLI supported), automatically migrates existing setups when <code>agy</code> is installed, verifies <code>agy</code> sign-in status live, and filters <code>agy models</code> to Gemini models under the Google Gemini provider.</li>
+    </ul>
     <b>1.4.1</b>
     <ul>
       <li><b>Fixed Gemini CLI exit code 55 (untrusted directory):</b> Sets <code>GEMINI_CLI_TRUST_WORKSPACE=true</code> on headless <code>gemini</code> CLI invocations so Test Connection, browser login, and orchestrations work cleanly from any working directory without requiring interactive folder trust.</li>
