@@ -7,14 +7,17 @@ import com.intellij.openapi.components.State;
 import com.intellij.openapi.components.Storage;
 import com.intellij.util.xmlb.XmlSerializerUtil;
 import io.github.obelisk121.trimodel.model.AgentSkillConfig;
+import io.github.obelisk121.trimodel.model.ConnectionMode;
 import io.github.obelisk121.trimodel.model.ModelProviderType;
 import io.github.obelisk121.trimodel.model.OrchestrationMode;
 import io.github.obelisk121.trimodel.model.RoleAssignment;
+import io.github.obelisk121.trimodel.provider.CliModelClient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
@@ -27,7 +30,16 @@ import java.util.concurrent.CopyOnWriteArrayList;
 )
 public final class TriModelSettings implements PersistentStateComponent<TriModelSettings.State> {
 
+    private static final int CURRENT_SCHEMA_VERSION = 2;
+    private static final Set<String> LEGACY_HARDCODED_DEFAULTS = Set.of(
+            "claude-sonnet-5-5",
+            "gpt-6.2-sol",
+            "gemini-4-neon"
+    );
+
     public static class State {
+        public int schemaVersion = CURRENT_SCHEMA_VERSION;
+        public boolean autoDetectedOnce = false;
         public ProviderConfig claude = ProviderConfig.defaultsFor(ModelProviderType.CLAUDE);
         public ProviderConfig chatgpt = ProviderConfig.defaultsFor(ModelProviderType.CHATGPT);
         public ProviderConfig gemini = ProviderConfig.defaultsFor(ModelProviderType.GEMINI);
@@ -93,6 +105,26 @@ public final class TriModelSettings implements PersistentStateComponent<TriModel
         if ("exec -".equals(s.chatgpt.cliArgs != null ? s.chatgpt.cliArgs.trim() : "")) {
             s.chatgpt.cliArgs = ModelProviderType.CHATGPT.getDefaultCliArgs();
         }
+        // Auto-migrate legacy Gemini CLI args (-o -> --output-format; agy-safe args when configured as agy)
+        String gemArgs = s.gemini.cliArgs != null ? s.gemini.cliArgs.trim() : "";
+        if ("-p \"\" -o text".equals(gemArgs)) {
+            s.gemini.cliArgs = ModelProviderType.GEMINI.getDefaultCliArgs();
+        }
+        if ("agy".equals(CliModelClient.canonicalCliName(s.gemini.cliExecutable))
+                && (gemArgs.contains("-o ") || gemArgs.contains("-p \"\""))) {
+            s.gemini.cliArgs = "--output-format text --disable-slash-commands -p \"{prompt}\"";
+        }
+        if ("https://www.googleapis.com/auth/generative-language".equals(
+                s.gemini.oauthScopes != null ? s.gemini.oauthScopes.trim() : "")) {
+            s.gemini.oauthScopes = ModelProviderType.GEMINI.getDefaultOAuthScopes();
+        }
+        // Migrate pre-v2 configs so legacy hardcoded default model IDs do not break CLI execution
+        if (s.schemaVersion < CURRENT_SCHEMA_VERSION) {
+            clearLegacyHardcodedCliModel(s.claude);
+            clearLegacyHardcodedCliModel(s.chatgpt);
+            clearLegacyHardcodedCliModel(s.gemini);
+            s.schemaVersion = CURRENT_SCHEMA_VERSION;
+        }
         if (s.defaultMode == null) s.defaultMode = OrchestrationMode.PIPELINE;
         if (s.architectRole == null) s.architectRole = ModelProviderType.GEMINI;
         if (s.coderRole == null) s.coderRole = ModelProviderType.CLAUDE;
@@ -106,6 +138,13 @@ public final class TriModelSettings implements PersistentStateComponent<TriModel
         if (s.requestTimeoutSeconds < 15) s.requestTimeoutSeconds = 15;
         if (s.maxOutputTokens < 512) s.maxOutputTokens = 512;
         if (s.customSystemInstructions == null) s.customSystemInstructions = "";
+    }
+
+    private static void clearLegacyHardcodedCliModel(ProviderConfig cfg) {
+        if (cfg != null && cfg.connectionMode == ConnectionMode.LOCAL_CLI && cfg.modelId != null
+                && LEGACY_HARDCODED_DEFAULTS.contains(cfg.modelId.trim())) {
+            cfg.modelId = "";
+        }
     }
 
     public ProviderConfig getProviderConfig(ModelProviderType type) {
@@ -216,5 +255,14 @@ public final class TriModelSettings implements PersistentStateComponent<TriModel
 
     public void setCustomSystemInstructions(String instructions) {
         state.customSystemInstructions = instructions == null ? "" : instructions;
+    }
+
+    public boolean isAutoDetectedOnce() {
+        ensureDefaults(state);
+        return state.autoDetectedOnce;
+    }
+
+    public void setAutoDetectedOnce(boolean autoDetectedOnce) {
+        state.autoDetectedOnce = autoDetectedOnce;
     }
 }

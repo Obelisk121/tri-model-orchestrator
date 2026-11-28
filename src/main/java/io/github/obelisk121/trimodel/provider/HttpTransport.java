@@ -4,6 +4,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import java.net.ProxySelector;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -18,12 +19,14 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 
 /**
- * Shared HTTP JSON transport supporting cooperative cancellation and clean error extraction.
+ * Shared HTTP JSON transport supporting cooperative cancellation, system/IDE proxy detection,
+ * and clean error extraction across Linux, Windows, and macOS.
  */
 public final class HttpTransport {
     private static final HttpClient SHARED_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(20))
             .followRedirects(HttpClient.Redirect.NORMAL)
+            .proxy(ProxySelector.getDefault())
             .build();
 
     public record HttpResult(int statusCode, String body, long latencyMs, boolean cancelled, String transportError) {
@@ -38,6 +41,16 @@ public final class HttpTransport {
                 String url,
                 Map<String, String> headers,
                 String jsonBody,
+                int timeoutSeconds,
+                BooleanSupplier isCancelled
+        );
+    }
+
+    @FunctionalInterface
+    public interface GetFunction {
+        HttpResult get(
+                String url,
+                Map<String, String> headers,
                 int timeoutSeconds,
                 BooleanSupplier isCancelled
         );
@@ -66,16 +79,60 @@ public final class HttpTransport {
                     .header("Accept", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8));
 
-            if (headers != null) {
-                for (Map.Entry<String, String> entry : headers.entrySet()) {
-                    if (entry.getKey() != null && entry.getValue() != null) {
-                        builder.header(entry.getKey(), entry.getValue());
-                    }
+            applyHeaders(builder, headers);
+            return executeRequest(builder.build(), url, timeoutSeconds, isCancelled, startNanos);
+        } catch (Exception e) {
+            return new HttpResult(0, "", elapsedMs(startNanos), false,
+                    "HTTP error calling " + url + ": " + e.getMessage());
+        }
+    }
+
+    public static HttpResult getJson(
+            String url,
+            Map<String, String> headers,
+            int timeoutSeconds,
+            BooleanSupplier isCancelled
+    ) {
+        long startNanos = System.nanoTime();
+        if (isCancelled != null && isCancelled.getAsBoolean()) {
+            return new HttpResult(0, "", 0, true, "Cancelled before request started");
+        }
+
+        try {
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .timeout(Duration.ofSeconds(Math.max(10, timeoutSeconds)))
+                    .header("Accept", "application/json")
+                    .GET();
+
+            applyHeaders(builder, headers);
+            return executeRequest(builder.build(), url, timeoutSeconds, isCancelled, startNanos);
+        } catch (Exception e) {
+            return new HttpResult(0, "", elapsedMs(startNanos), false,
+                    "HTTP error calling " + url + ": " + e.getMessage());
+        }
+    }
+
+    private static void applyHeaders(HttpRequest.Builder builder, Map<String, String> headers) {
+        if (headers != null) {
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                if (entry.getKey() != null && entry.getValue() != null) {
+                    builder.header(entry.getKey(), entry.getValue());
                 }
             }
+        }
+    }
 
+    private static HttpResult executeRequest(
+            HttpRequest request,
+            String url,
+            int timeoutSeconds,
+            BooleanSupplier isCancelled,
+            long startNanos
+    ) {
+        try {
             CompletableFuture<HttpResponse<String>> future =
-                    SHARED_CLIENT.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                    SHARED_CLIENT.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 
             long deadlineNanos = startNanos + TimeUnit.SECONDS.toNanos(Math.max(10, timeoutSeconds) + 5L);
             while (true) {

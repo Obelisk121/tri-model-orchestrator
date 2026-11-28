@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>io.github.obelisk121.trimodel</id>
     <name>Tri-Model AI Orchestrator</name>
-    <version>1.3.0</version>
+    <version>1.4.0</version>
     <vendor email="oabaiadze@gmail.com" url="https://github.com/Obelisk121/tri-model-orchestrator">Oto Abaiadze</vendor>
     <idea-version since-build="242"/>
 
@@ -23,6 +23,12 @@
     ]]></description>
 
     <change-notes><![CDATA[
+    <b>1.4.0</b>
+    <ul>
+      <li><b>Live API &amp; CLI Model Discovery (Zero Hardcoded Presets):</b> Replaced all hardcoded model lists with live model discovery via Anthropic <code>GET /v1/models</code>, OpenAI <code>GET /v1/models</code>, Google Gemini <code>GET /v1beta/models</code>, and official CLIs (<code>gemini models -o json</code>, <code>agy models</code>, <code>codex debug models</code>). Added a live <b>Model</b> picker &amp; <b>Refresh</b> button across Quick Setup and all Settings sign-in modes, with automatic API resolution when no model is pre-selected.</li>
+      <li><b>Fixed Browser Sign-In across Claude, ChatGPT &amp; Gemini:</b> Stopped opening duplicate browser tabs for <code>codex login</code> and <code>claude auth login</code> (preventing Claude's manual paste-code fallback page from opening over its automatic localhost callback). Fixed <code>gemini</code> CLI browser sign-in by automatically confirming its non-interactive <code>[Y/n]</code> OAuth prompt and closing stdin cleanly, added <b>Sign Out</b> for Gemini CLI, added first-class <code>agy</code> CLI support (fixing <code>-o</code> flag errors), and stripped Codex startup banners from CLI error messages.</li>
+      <li><b>Cross-Platform Auto-Detection (Linux, Windows &amp; macOS):</b> Added <code>EnvironmentAutoDetector</code> with first-launch detection and 1-click <b>Auto-Detect All</b> in Quick Setup and Settings &mdash; discovering OS-specific CLI locations (Windows <code>.exe</code>/<code>.cmd</code>/WinGet/Scoop/Chocolatey/npm, Linux Linuxbrew/Snap/Flatpak/XDG/nvm/fnm/mise, macOS Homebrew/MacPorts/Antigravity), environment API keys &amp; custom base URLs, system/IDE proxy settings, and live available models.</li>
+    </ul>
     <b>1.3.0</b>
     <ul>
       <li>Added composable <b>Independent Verification &amp; Anti-Sycophancy Agent Skills</b> (enabled by default): forbids blind agreement between agents, enforces topic-by-topic peer analysis matrices (<code>[VERIFIED]</code>, <code>[DISPUTED]</code>, <code>[MISSING]</code>, <code>[UNPROVEN]</code>), demands concrete symbol/edge-case precision, anonymizes peer brand names in handoffs, and adds optional <b>Strict Adversarial (Devil's Advocate)</b> stress-testing.</li>

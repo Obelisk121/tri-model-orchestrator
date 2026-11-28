@@ -28,12 +28,15 @@ import io.github.obelisk121.trimodel.model.OpenAiApiStyle;
 import io.github.obelisk121.trimodel.model.OrchestrationMode;
 import io.github.obelisk121.trimodel.model.RoleAssignment;
 import io.github.obelisk121.trimodel.provider.CliModelClient;
+import io.github.obelisk121.trimodel.provider.EnvironmentAutoDetector;
 import io.github.obelisk121.trimodel.provider.ModelClient;
 import io.github.obelisk121.trimodel.provider.ModelClientFactory;
+import io.github.obelisk121.trimodel.provider.ModelDiscoveryService;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
@@ -50,6 +53,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Clean, card-based PyCharm Settings page (Settings -> Tools -> Tri-Model AI Orchestrator).
@@ -113,8 +117,39 @@ public final class TriModelConfigurable implements SearchableConfigurable {
         rootPanel.add(tabs, BorderLayout.CENTER);
 
         JPanel footer = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        JButton autoDetectAllBtn = new JButton("Auto-Detect All (" + EnvironmentAutoDetector.formatOsLabel(
+                System.getProperty("os.name", ""), System.getProperty("os.arch", "")) + ")");
         JButton testAllBtn = new JButton("Test All Enabled Models");
         JBLabel footerStatus = new JBLabel(" ");
+
+        autoDetectAllBtn.addActionListener(e -> {
+            autoDetectAllBtn.setEnabled(false);
+            footerStatus.setForeground(JBColor.foreground());
+            footerStatus.setText("Auto-detecting CLIs, environment variables & live models...");
+            Map<ModelProviderType, ProviderConfig> currentConfigs = new EnumMap<>(ModelProviderType.class);
+            Map<ModelProviderType, String> apiKeys = new EnumMap<>(ModelProviderType.class);
+            for (Map.Entry<ModelProviderType, ProviderEditor> entry : providerEditors.entrySet()) {
+                currentConfigs.put(entry.getKey(), entry.getValue().toConfig());
+                apiKeys.put(entry.getKey(), entry.getValue().getApiKeyText());
+            }
+            ProviderEditor.runAsync(() -> {
+                EnvironmentAutoDetector.EnvironmentReport report = new EnvironmentAutoDetector()
+                        .detectAll(currentConfigs, apiKeys, true, () -> rootPanel == null);
+                SwingUtilities.invokeLater(() -> {
+                    if (rootPanel == null) return;
+                    autoDetectAllBtn.setEnabled(true);
+                    footerStatus.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
+                    footerStatus.setText(report.summary() + " — click Apply/OK to save.");
+                    for (Map.Entry<ModelProviderType, EnvironmentAutoDetector.ProviderDetection> detEntry : report.providers().entrySet()) {
+                        ProviderEditor ed = providerEditors.get(detEntry.getKey());
+                        if (ed != null) {
+                            ed.applyAutoDetection(detEntry.getValue());
+                        }
+                    }
+                });
+            }, "TriModel-SettingsAutoDetect");
+        });
+
         testAllBtn.addActionListener(e -> {
             footerStatus.setForeground(JBColor.foreground());
             footerStatus.setText("Testing enabled providers — check each provider tab for results.");
@@ -124,6 +159,7 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                 }
             }
         });
+        footer.add(autoDetectAllBtn);
         footer.add(testAllBtn);
         footer.add(footerStatus);
         rootPanel.add(footer, BorderLayout.SOUTH);
@@ -310,14 +346,19 @@ public final class TriModelConfigurable implements SearchableConfigurable {
             for (Map.Entry<ModelProviderType, ProviderEditor> entry : providerEditors.entrySet()) {
                 ProviderEditor ed = entry.getValue();
                 String storedKey = SecretStorageService.getStoredApiKey(entry.getKey());
+                boolean keyLoaded = false;
                 if (ed.getApiKeyText().isEmpty() && !storedKey.isEmpty()) {
                     ed.apiKeyField.setText(storedKey);
+                    keyLoaded = true;
                 }
                 String storedSecret = SecretStorageService.getOAuthClientSecret(entry.getKey());
                 if (ed.getOAuthClientSecretText().isEmpty() && !storedSecret.isEmpty()) {
                     ed.oauthClientSecretField.setText(storedSecret);
                 }
                 ed.refreshOAuthStatusLabel();
+                if (keyLoaded || ed.connectionModeBox.getSelectedItem() == ConnectionMode.OAUTH_BROWSER) {
+                    ed.refreshModelsAsync(false, false);
+                }
             }
         }));
         RoleAssignment roles = settings.getRoleAssignment();
@@ -364,11 +405,16 @@ public final class TriModelConfigurable implements SearchableConfigurable {
         final JBPasswordField apiKeyField = new JBPasswordField();
         final JButton getApiKeyBtn = new JButton("Get API Key in Browser ↗");
         final JBLabel envHintLabel = new JBLabel();
-        final ComboBox<String> modelBox;
         final JBTextField baseUrlField = new JBTextField();
         final JBTextField anthropicVersionField = new JBTextField();
         final ComboBox<OpenAiApiStyle> openAiStyleBox = new ComboBox<>(OpenAiApiStyle.values());
         final ComboBox<GeminiApiStyle> geminiStyleBox = new ComboBox<>(GeminiApiStyle.values());
+
+        // Shared live Model selector (populated via API / CLI discovery — never hardcoded)
+        final ComboBox<String> modelBox = new ComboBox<>();
+        final JButton refreshModelsBtn = new JButton("Refresh Models");
+        final JBLabel modelSourceLabel = new JBLabel("Models are fetched live from the provider API / CLI.");
+        final AtomicInteger modelFetchGen = new AtomicInteger(0);
 
         // Card 3: Custom OAuth 2.0 (Own Client ID / Enterprise)
         final JBTextField oauthClientIdField = new JBTextField();
@@ -392,16 +438,20 @@ public final class TriModelConfigurable implements SearchableConfigurable {
 
         final JPanel panel;
         private volatile AtomicBoolean authCancelFlag = new AtomicBoolean(false);
+        private boolean loadingConfig = false;
 
         ProviderEditor(ModelProviderType type) {
             this.type = type;
-            List<String> presets = type.getModelPresets();
-            this.modelBox = new ComboBox<>(presets.toArray(new String[0]));
             this.modelBox.setEditable(true);
+            this.modelSourceLabel.setForeground(JBColor.GRAY);
 
             modeCardsPanel.add(buildBrowserCliCard(), ConnectionMode.LOCAL_CLI.name());
             modeCardsPanel.add(buildApiKeyCard(), ConnectionMode.REST_API.name());
             modeCardsPanel.add(buildCustomOAuthCard(), ConnectionMode.OAUTH_BROWSER.name());
+
+            JPanel modelRow = new JPanel(new BorderLayout(6, 0));
+            modelRow.add(modelBox, BorderLayout.CENTER);
+            modelRow.add(refreshModelsBtn, BorderLayout.EAST);
 
             JPanel actionsRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
             actionsRow.add(testButton);
@@ -414,12 +464,21 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                     .addSeparator(8)
                     .addComponent(modeCardsPanel)
                     .addSeparator(8)
+                    .addLabeledComponent("Available Model (live):", modelRow)
+                    .addComponent(modelSourceLabel)
+                    .addSeparator(8)
                     .addComponent(actionsRow)
                     .addComponentFillVertically(new JPanel(), 0)
                     .getPanel();
             this.panel.setBorder(JBUI.Borders.empty(10));
 
-            connectionModeBox.addActionListener(e -> showActiveModeCard());
+            connectionModeBox.addActionListener(e -> {
+                showActiveModeCard();
+                if (!loadingConfig) {
+                    refreshModelsAsync(false, true);
+                }
+            });
+            refreshModelsBtn.addActionListener(e -> refreshModelsAsync(true, true));
             testButton.addActionListener(e -> runConnectionTest());
             resetDefaultsButton.addActionListener(e -> {
                 ProviderConfig def = ProviderConfig.defaultsFor(type);
@@ -430,9 +489,7 @@ public final class TriModelConfigurable implements SearchableConfigurable {
         private JPanel buildBrowserCliCard() {
             JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
             buttons.add(cliLoginBtn);
-            if (!type.getDefaultCliLogoutArgs().isBlank()) {
-                buttons.add(cliLogoutBtn);
-            }
+            buttons.add(cliLogoutBtn);
             buttons.add(cliCopyInstallBtn);
             buttons.add(cliRecheckBtn);
 
@@ -451,7 +508,17 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                 testStatusLabel.setForeground(JBColor.foreground());
                 testStatusLabel.setText("Copied: " + type.getCliInstallHint());
             });
-            cliRecheckBtn.addActionListener(e -> refreshCliDetection());
+            cliRecheckBtn.addActionListener(e -> {
+                // Auto-adapt CLI arguments when user switches Gemini executable to 'agy'
+                String exe = cliExecutableField.getText().trim();
+                String currentArgs = cliArgsField.getText().trim();
+                if ("agy".equals(CliModelClient.canonicalCliName(exe))
+                        && (currentArgs.isBlank() || currentArgs.contains("-o ") || currentArgs.contains("-p \"\""))) {
+                    cliArgsField.setText("--output-format text --disable-slash-commands -p \"{prompt}\"");
+                }
+                refreshCliDetection();
+                refreshModelsAsync(true, true);
+            });
 
             return FormBuilder.createFormBuilder()
                     .addComponent(new JBLabel("<html>Uses your official <code>" + type.getDefaultCliExecutable()
@@ -470,10 +537,12 @@ public final class TriModelConfigurable implements SearchableConfigurable {
             keyRow.add(getApiKeyBtn, BorderLayout.EAST);
 
             boolean envDetected = SecretStorageService.hasEnvironmentKey(type);
-            envHintLabel.setText(envDetected
+            String envBaseUrl = EnvironmentAutoDetector.detectEnvBaseUrl(type, System.getenv());
+            String baseHint = envBaseUrl.isBlank() ? "" : " | Base URL env detected: " + envBaseUrl;
+            envHintLabel.setText((envDetected
                     ? "Detected " + type.getEnvVarName() + " in environment (used automatically if field is left blank)."
-                    : "Optional: leave blank if you already export " + type.getEnvVarName() + ".");
-            envHintLabel.setForeground(envDetected ? new JBColor(0x0F9D78, 0x2AD1A3) : JBColor.GRAY);
+                    : "Optional: leave blank if you already export " + type.getEnvVarName() + ".") + baseHint);
+            envHintLabel.setForeground((envDetected || !envBaseUrl.isBlank()) ? new JBColor(0x0F9D78, 0x2AD1A3) : JBColor.GRAY);
 
             FormBuilder advBuilder = FormBuilder.createFormBuilder()
                     .addLabeledComponent("API Base URL:", baseUrlField);
@@ -493,7 +562,6 @@ public final class TriModelConfigurable implements SearchableConfigurable {
             return FormBuilder.createFormBuilder()
                     .addLabeledComponent("API Key:", keyRow)
                     .addComponent(envHintLabel)
-                    .addLabeledComponent("Model:", modelBox)
                     .addComponent(advToggle)
                     .addComponent(advancedPanel)
                     .getPanel();
@@ -528,6 +596,7 @@ public final class TriModelConfigurable implements SearchableConfigurable {
             cancelAuthBtn.addActionListener(e -> cancelActiveAuth());
             signOutOAuthBtn.addActionListener(e -> {
                 OAuthSessionStore.clearSession(type);
+                ModelDiscoveryService.invalidateCache(type);
                 refreshOAuthStatusLabel();
             });
 
@@ -559,29 +628,43 @@ public final class TriModelConfigurable implements SearchableConfigurable {
         }
 
         void loadFrom(ProviderConfig cfg, String storedKey, String storedOAuthSecret) {
-            enabledCheck.setSelected(cfg.enabled);
-            connectionModeBox.setSelectedItem(cfg.connectionMode == null ? ConnectionMode.REST_API : cfg.connectionMode);
-            apiKeyField.setText(storedKey == null ? "" : storedKey);
-            modelBox.setSelectedItem(cfg.effectiveModelId(type));
-            baseUrlField.setText(cfg.effectiveBaseUrl(type));
-            anthropicVersionField.setText(cfg.effectiveAnthropicVersion());
-            openAiStyleBox.setSelectedItem(cfg.openAiApiStyle == null ? OpenAiApiStyle.RESPONSES : cfg.openAiApiStyle);
-            geminiStyleBox.setSelectedItem(cfg.geminiApiStyle == null ? GeminiApiStyle.INTERACTIONS : cfg.geminiApiStyle);
+            loadingConfig = true;
+            try {
+                enabledCheck.setSelected(cfg.enabled);
+                connectionModeBox.setSelectedItem(cfg.connectionMode == null ? ConnectionMode.REST_API : cfg.connectionMode);
+                apiKeyField.setText(storedKey == null ? "" : storedKey);
 
-            oauthClientIdField.setText(cfg.effectiveOAuthClientId());
-            oauthClientSecretField.setText(storedOAuthSecret == null ? "" : storedOAuthSecret);
-            oauthAuthorizeUrlField.setText(cfg.effectiveOAuthAuthorizeUrl(type));
-            oauthTokenUrlField.setText(cfg.effectiveOAuthTokenUrl(type));
-            oauthScopesField.setText(cfg.effectiveOAuthScopes(type));
-            oauthCallbackPortSpinner.setValue(cfg.effectiveOAuthCallbackPort());
-            oauthTemporaryOnlyCheck.setSelected(cfg.oauthTemporaryOnly);
+                DefaultComboBoxModel<String> initialModel = new DefaultComboBoxModel<>();
+                String savedModel = cfg.effectiveModelId(type);
+                if (!savedModel.isBlank()) {
+                    initialModel.addElement(savedModel);
+                }
+                modelBox.setModel(initialModel);
+                modelBox.setSelectedItem(savedModel);
 
-            cliExecutableField.setText(cfg.effectiveCliExecutable(type));
-            cliArgsField.setText(cfg.effectiveCliArgs(type));
+                baseUrlField.setText(cfg.effectiveBaseUrl(type));
+                anthropicVersionField.setText(cfg.effectiveAnthropicVersion());
+                openAiStyleBox.setSelectedItem(cfg.openAiApiStyle == null ? OpenAiApiStyle.RESPONSES : cfg.openAiApiStyle);
+                geminiStyleBox.setSelectedItem(cfg.geminiApiStyle == null ? GeminiApiStyle.INTERACTIONS : cfg.geminiApiStyle);
 
-            refreshCliDetection();
-            refreshOAuthStatusLabel();
-            showActiveModeCard();
+                oauthClientIdField.setText(cfg.effectiveOAuthClientId());
+                oauthClientSecretField.setText(storedOAuthSecret == null ? "" : storedOAuthSecret);
+                oauthAuthorizeUrlField.setText(cfg.effectiveOAuthAuthorizeUrl(type));
+                oauthTokenUrlField.setText(cfg.effectiveOAuthTokenUrl(type));
+                oauthScopesField.setText(cfg.effectiveOAuthScopes(type));
+                oauthCallbackPortSpinner.setValue(cfg.effectiveOAuthCallbackPort());
+                oauthTemporaryOnlyCheck.setSelected(cfg.oauthTemporaryOnly);
+
+                cliExecutableField.setText(cfg.effectiveCliExecutable(type));
+                cliArgsField.setText(cfg.effectiveCliArgs(type));
+
+                refreshCliDetection();
+                refreshOAuthStatusLabel();
+                showActiveModeCard();
+            } finally {
+                loadingConfig = false;
+            }
+            refreshModelsAsync(false, false);
         }
 
         void showActiveModeCard() {
@@ -598,13 +681,164 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                 cliDetectionLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
                 cliDetectionLabel.setText("✓ Installed (" + resolved + ")");
                 cliLoginBtn.setEnabled(true);
+                cliLogoutBtn.setVisible(CliModelClient.supportsCliLogout(type, exe));
                 cliCopyInstallBtn.setVisible(false);
+
+                String capturedExe = exe;
+                runAsync(() -> {
+                    CliModelClient.CliAuthStatus status = CliModelClient.checkCliAuthStatus(type, capturedExe);
+                    SwingUtilities.invokeLater(() -> {
+                        if (!status.installed()) return;
+                        switch (status.state()) {
+                            case SIGNED_IN -> {
+                                cliDetectionLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
+                                cliDetectionLabel.setText("✓ " + status.detail() + " (" + status.resolvedPath() + ")");
+                            }
+                            case SIGNED_OUT -> {
+                                cliDetectionLabel.setForeground(new JBColor(0xD97706, 0xF59E0B));
+                                cliDetectionLabel.setText("⚠ " + status.detail() + " (" + status.resolvedPath() + ")");
+                            }
+                            default -> {
+                                cliDetectionLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
+                                cliDetectionLabel.setText("✓ Installed (" + status.resolvedPath() + ")");
+                            }
+                        }
+                    });
+                }, "TriModel-CliStatus-" + type.name());
             } else {
                 cliDetectionLabel.setForeground(new JBColor(0xD97706, 0xF59E0B));
                 cliDetectionLabel.setText("Not installed — run: " + type.getCliInstallHint());
                 cliLoginBtn.setEnabled(false);
+                cliLogoutBtn.setVisible(false);
                 cliCopyInstallBtn.setVisible(true);
             }
+        }
+
+        void refreshModelsAsync(boolean forceRefresh, boolean autoSelectIfInvalid) {
+            int gen = modelFetchGen.incrementAndGet();
+            ProviderConfig cfg = toConfig();
+            String key = getApiKeyText();
+
+            if (cfg.connectionMode == ConnectionMode.LOCAL_CLI
+                    && !CliModelClient.isCliInstalled(type, cfg.effectiveCliExecutable(type))) {
+                modelSourceLabel.setForeground(JBColor.GRAY);
+                modelSourceLabel.setText("Install CLI to discover available models.");
+                return;
+            }
+            if (cfg.connectionMode == ConnectionMode.REST_API
+                    && key.isBlank() && !SecretStorageService.hasEnvironmentKey(type)) {
+                modelSourceLabel.setForeground(JBColor.GRAY);
+                modelSourceLabel.setText("Enter an API key (or export " + type.getEnvVarName() + "), then click Refresh Models.");
+                return;
+            }
+            if (cfg.connectionMode == ConnectionMode.OAUTH_BROWSER && !OAuthSessionStore.hasUsableSession(type)) {
+                modelSourceLabel.setForeground(JBColor.GRAY);
+                modelSourceLabel.setText("Authorize in Browser first, then click Refresh Models.");
+                return;
+            }
+
+            refreshModelsBtn.setEnabled(false);
+            modelSourceLabel.setForeground(JBColor.GRAY);
+            modelSourceLabel.setText("Fetching live available models from " + type.getShortName() + "...");
+
+            runAsync(() -> {
+                ModelDiscoveryService discovery = new ModelDiscoveryService();
+                ModelDiscoveryService.DiscoveryResult res = discovery.fetchAvailableModels(
+                        type, cfg, key, forceRefresh, () -> modelFetchGen.get() != gen);
+                SwingUtilities.invokeLater(() -> {
+                    if (modelFetchGen.get() != gen) return;
+                    refreshModelsBtn.setEnabled(true);
+                    if (res.success() && !res.models().isEmpty()) {
+                        String current = getSelectedModelText();
+                        DefaultComboBoxModel<String> comboModel = new DefaultComboBoxModel<>();
+                        for (ModelDiscoveryService.DiscoveredModel m : res.models()) {
+                            comboModel.addElement(m.id());
+                        }
+                        boolean currentAvailable = !current.isBlank() && res.containsModelId(current);
+                        if (!currentAvailable && !current.isBlank() && !autoSelectIfInvalid) {
+                            // Keep previously saved selection on initial open so isModified() stays false,
+                            // while clearly flagging that it is not in the live catalog.
+                            comboModel.insertElementAt(current, 0);
+                            modelBox.setModel(comboModel);
+                            modelBox.setSelectedItem(current);
+                            modelSourceLabel.setForeground(new JBColor(0xD97706, 0xF59E0B));
+                            modelSourceLabel.setText("Loaded " + res.models().size() + " model(s) from " + res.source()
+                                    + " — '" + current + "' was not listed; pick an available model above.");
+                        } else {
+                            modelBox.setModel(comboModel);
+                            if (currentAvailable) {
+                                modelBox.setSelectedItem(current);
+                            } else if (autoSelectIfInvalid || !current.isBlank()) {
+                                modelBox.setSelectedItem(res.models().get(0).id());
+                            } else {
+                                // Saved model was blank on initial load: preserve blank until user picks or clicks Refresh
+                                modelBox.setSelectedItem(autoSelectIfInvalid ? res.models().get(0).id() : "");
+                            }
+                            modelSourceLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
+                            modelSourceLabel.setText("Loaded " + res.models().size() + " available model(s) from " + res.source() + ".");
+                        }
+                    } else {
+                        modelSourceLabel.setForeground(new JBColor(0xD97706, 0xF59E0B));
+                        String err = res.errorMessage().isBlank() ? "Could not fetch models." : res.errorMessage();
+                        modelSourceLabel.setText(err.length() > 120 ? err.substring(0, 120) + "..." : err);
+                        modelSourceLabel.setToolTipText(err);
+                    }
+                });
+            }, "TriModel-Discover-" + type.name());
+        }
+
+        private String getSelectedModelText() {
+            Object selectedModel = modelBox.getEditor().getItem();
+            return selectedModel == null ? "" : selectedModel.toString().trim();
+        }
+
+        void applyAutoDetection(EnvironmentAutoDetector.ProviderDetection det) {
+            if (det == null) return;
+            ProviderConfig suggested = det.suggestedConfig();
+            loadingConfig = true;
+            try {
+                enabledCheck.setSelected(suggested.enabled);
+                connectionModeBox.setSelectedItem(suggested.connectionMode == null ? ConnectionMode.REST_API : suggested.connectionMode);
+                baseUrlField.setText(suggested.effectiveBaseUrl(type));
+                cliExecutableField.setText(suggested.effectiveCliExecutable(type));
+                cliArgsField.setText(suggested.effectiveCliArgs(type));
+                showActiveModeCard();
+            } finally {
+                loadingConfig = false;
+            }
+
+            CliModelClient.CliAuthStatus status = det.cliStatus();
+            if (status != null && status.installed()) {
+                cliLoginBtn.setEnabled(true);
+                cliLogoutBtn.setVisible(CliModelClient.supportsCliLogout(type, suggested.effectiveCliExecutable(type)));
+                cliCopyInstallBtn.setVisible(false);
+                if (status.state() == CliModelClient.AuthState.SIGNED_OUT) {
+                    cliDetectionLabel.setForeground(new JBColor(0xD97706, 0xF59E0B));
+                    cliDetectionLabel.setText("⚠ " + status.detail() + " (" + status.resolvedPath() + ")");
+                } else {
+                    cliDetectionLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
+                    cliDetectionLabel.setText("✓ " + status.detail() + " (" + status.resolvedPath() + ")");
+                }
+            } else {
+                refreshCliDetection();
+            }
+
+            ModelDiscoveryService.DiscoveryResult disc = det.discovery();
+            if (disc != null && disc.success() && !disc.models().isEmpty()) {
+                DefaultComboBoxModel<String> comboModel = new DefaultComboBoxModel<>();
+                for (ModelDiscoveryService.DiscoveredModel m : disc.models()) {
+                    comboModel.addElement(m.id());
+                }
+                modelBox.setModel(comboModel);
+                String chosen = (suggested.modelId != null && !suggested.modelId.isBlank())
+                        ? suggested.modelId : disc.models().get(0).id();
+                modelBox.setSelectedItem(chosen);
+                modelSourceLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
+                modelSourceLabel.setText("Auto-detected " + disc.models().size() + " available model(s) from " + disc.source() + ".");
+            }
+            testStatusLabel.setForeground(det.ready() ? new JBColor(0x0F9D78, 0x2AD1A3) : JBColor.GRAY);
+            testStatusLabel.setText((det.ready() ? "✓ " : "") + det.summary());
+            testStatusLabel.setToolTipText(det.summary());
         }
 
         void refreshOAuthStatusLabel() {
@@ -641,6 +875,7 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                     cancelAuthBtn.setEnabled(false);
                     if (result.success()) {
                         refreshOAuthStatusLabel();
+                        refreshModelsAsync(true, true);
                     } else {
                         oauthStatusLabel.setForeground(JBColor.RED);
                         oauthStatusLabel.setText(result.errorMessage());
@@ -665,9 +900,15 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                         type, exe, s -> SwingUtilities.invokeLater(() -> testStatusLabel.setText(s)));
                 SwingUtilities.invokeLater(() -> {
                     cliLoginBtn.setEnabled(true);
-                    testStatusLabel.setForeground(msg.contains("successfully")
+                    boolean ok = msg.contains("successfully");
+                    testStatusLabel.setForeground(ok
                             ? new JBColor(0x0F9D78, 0x2AD1A3) : JBColor.foreground());
                     testStatusLabel.setText(msg);
+                    testStatusLabel.setToolTipText(msg);
+                    refreshCliDetection();
+                    if (ok) {
+                        refreshModelsAsync(true, true);
+                    }
                 });
             }, "TriModel-CliLogin-" + type.name());
         }
@@ -681,6 +922,8 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                     cliLogoutBtn.setEnabled(true);
                     testStatusLabel.setForeground(JBColor.foreground());
                     testStatusLabel.setText(msg);
+                    testStatusLabel.setToolTipText(msg);
+                    refreshCliDetection();
                 });
             }, "TriModel-CliLogout-" + type.name());
         }
@@ -689,8 +932,7 @@ public final class TriModelConfigurable implements SearchableConfigurable {
             ProviderConfig cfg = new ProviderConfig();
             cfg.enabled = enabledCheck.isSelected();
             cfg.connectionMode = (ConnectionMode) connectionModeBox.getSelectedItem();
-            Object selectedModel = modelBox.getEditor().getItem();
-            cfg.modelId = selectedModel == null ? type.getDefaultModel() : selectedModel.toString().trim();
+            cfg.modelId = getSelectedModelText();
             cfg.baseUrl = baseUrlField.getText().trim();
             cfg.anthropicVersion = anthropicVersionField.getText().trim();
             cfg.openAiApiStyle = (OpenAiApiStyle) openAiStyleBox.getSelectedItem();
@@ -735,13 +977,17 @@ public final class TriModelConfigurable implements SearchableConfigurable {
                     testButton.setEnabled(true);
                     if (resp.success()) {
                         testStatusLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
-                        testStatusLabel.setText("✓ Connected (" + resp.latencyMs() + "ms) - " + resp.modelId());
+                        String okText = "✓ Connected (" + resp.latencyMs() + "ms) - " + resp.modelId();
+                        testStatusLabel.setText(okText);
+                        testStatusLabel.setToolTipText(okText);
+                        if (modelBox.getItemCount() == 0) {
+                            refreshModelsAsync(true, true);
+                        }
                     } else {
                         testStatusLabel.setForeground(JBColor.RED);
-                        String err = resp.errorMessage();
-                        if (err.length() > 110) {
-                            err = err.substring(0, 110) + "...";
-                        }
+                        String fullErr = resp.errorMessage();
+                        testStatusLabel.setToolTipText(fullErr);
+                        String err = fullErr.length() > 110 ? fullErr.substring(0, 110) + "..." : fullErr;
                         testStatusLabel.setText("✗ " + err);
                     }
                 });

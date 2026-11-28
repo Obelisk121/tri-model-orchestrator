@@ -81,6 +81,10 @@ public final class GeminiClient implements ModelClient {
                     : "Gemini API key is not configured. Add it in Settings -> Tools -> Tri-Model AI Orchestrator or set GEMINI_API_KEY.";
             return ModelResponse.error(ModelProviderType.GEMINI, modelId, msg, 0);
         }
+        if (modelId.isBlank() || ModelDiscoveryService.AUTO_MODEL_ID.equalsIgnoreCase(modelId)) {
+            return ModelResponse.error(ModelProviderType.GEMINI, "",
+                    "No Gemini model selected. Open Sign In or Settings and click Refresh Models to load available models from the Gemini API.", 0);
+        }
 
         Map<String, String> headers = new LinkedHashMap<>();
         if (useBearerAuth) {

@@ -79,6 +79,10 @@ public final class ClaudeClient implements ModelClient {
                     : "Anthropic API key is not configured. Add it in Settings -> Tools -> Tri-Model AI Orchestrator or set ANTHROPIC_API_KEY.";
             return ModelResponse.error(ModelProviderType.CLAUDE, modelId, msg, 0);
         }
+        if (modelId.isBlank() || ModelDiscoveryService.AUTO_MODEL_ID.equalsIgnoreCase(modelId)) {
+            return ModelResponse.error(ModelProviderType.CLAUDE, "",
+                    "No Claude model selected. Open Sign In or Settings and click Refresh Models to load available models from the Anthropic API.", 0);
+        }
 
         String endpoint = buildEndpoint(baseUrl);
         JsonObject payload = buildPayload(request);

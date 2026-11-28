@@ -4,6 +4,25 @@ All notable changes to **Tri-Model AI Orchestrator** are documented in this file
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-11-28
+
+### Added
+- **Live API & CLI Model Discovery (`ModelDiscoveryService`):** Removed all hardcoded static model presets and defaults. Available models are now fetched live from:
+  - **REST API / Custom OAuth:** Anthropic `GET /v1/models` (paginated), OpenAI `GET /v1/models` (filtered & sorted newest first, with custom-gateway fallback), and Google Gemini `GET /v1beta/models?pageSize=100` (paginated & filtered to `generateContent` models).
+  - **Browser Sign-In (Official CLI):** `gemini models -o json` (with `--list-models` fallback), `agy models`, `codex debug models`, and Anthropic `/v1/models` or `auto` account default for `claude` CLI.
+  - Added a live **Model** dropdown and **Refresh** button to every provider card in **Quick Setup** and shared across all three sign-in modes in **Settings**, plus lazy background API model resolution when no model is pre-selected.
+- **Cross-Platform Environment Auto-Detection (`EnvironmentAutoDetector`):**
+  - Automatically detects installed/signed-in CLIs, `gemini` <-> `agy` fallback, environment API keys, custom base URLs (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `GOOGLE_GEMINI_BASE_URL`), `~/.npmrc` custom npm prefixes, and system/IDE proxies (`ProxySelector.getDefault()`).
+  - Expanded executable & PATH scanning for **Windows** (preferring `.exe` > `.cmd` > `.bat` over npm POSIX shims, scanning `%APPDATA%\npm`, WinGet, Scoop, Chocolatey, `Programs\claude-code`, `Antigravity\bin`, nvm-windows, fnm, mise), **Linux** (Linuxbrew, Snap, Flatpak, Nix, `$XDG_BIN_HOME`, pnpm, mise, newest-first nvm), and **macOS** (Homebrew, MacPorts, `Library/pnpm`, Antigravity app bundle), with OS-specific CLI install hints.
+  - Runs conservative first-launch auto-detection once on fresh installs and adds a 1-click **Auto-Detect All** button in both Quick Setup and Settings.
+- **Gemini CLI Sign Out & Live Auth Status:** Added `Sign Out` support for Gemini CLI (clearing cached Google OAuth credentials) and asynchronous real auth status checks (`claude auth status --json`, `codex login status`, Gemini `~/.gemini/` state).
+
+### Fixed
+- **Duplicate Browser Tabs on OpenAI (`codex login`) & Manual Paste-Code Page on Claude (`claude auth login`):** Stopped calling `BrowserUtil.browse(...)` on fallback URLs printed by CLIs that open the browser natively (and blocked auto-opening Claude's `/oauth/code/callback` manual-code URL), falling back to `BrowserUtil` only if a CLI explicitly reports failing to launch the browser.
+- **Google Gemini CLI Browser Sign-In Hang:** Automatically responds to Gemini CLI's non-interactive `Opening authentication page in your browser. Do you want to continue? [Y/n]: ` prompt (without trailing newline), closes stdin cleanly, and clears interfering `GEMINI_API_KEY`/`GOOGLE_API_KEY`/`NO_BROWSER` env vars during OAuth login.
+- **Google Gemini via `agy` CLI (`-o` exit code 2):** Added executable-aware argument normalization and automatic settings migration so `agy` runs with `--output-format text --disable-slash-commands [--model <m>] -p "{prompt}"` instead of incompatible `-o text` / `-p ""`.
+- **Codex CLI Error Diagnostics & UI Polish:** Stripped Codex's multi-line startup metadata banner when extracting CLI errors, added full-error tooltips, fixed clipped `Browser Sign-In` combo box width, and fixed `Save && Done` mnemonic escaping.
+
 ## [1.3.0] - 2026-11-26
 
 ### Added

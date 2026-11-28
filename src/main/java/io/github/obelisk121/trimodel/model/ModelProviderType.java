@@ -10,13 +10,6 @@ public enum ModelProviderType {
             "Claude",
             "Anthropic Claude",
             "https://api.anthropic.com",
-            "claude-sonnet-5-5",
-            List.of(
-                    "claude-sonnet-5-5",
-                    "claude-opus-5-5",
-                    "claude-fable-5-2",
-                    "claude-haiku-5-5"
-            ),
             "ANTHROPIC_API_KEY",
             "https://console.anthropic.com/settings/keys",
             "https://console.anthropic.com/",
@@ -35,13 +28,6 @@ public enum ModelProviderType {
             "ChatGPT",
             "OpenAI ChatGPT",
             "https://api.openai.com/v1",
-            "gpt-6.2-sol",
-            List.of(
-                    "gpt-6.2-sol",
-                    "gpt-6.2-astra",
-                    "gpt-6.1-terra",
-                    "gpt-6-luna"
-            ),
             "OPENAI_API_KEY",
             "https://platform.openai.com/api-keys",
             "https://platform.openai.com/",
@@ -60,25 +46,17 @@ public enum ModelProviderType {
             "Gemini",
             "Google Gemini",
             "https://generativelanguage.googleapis.com/v1beta",
-            "gemini-4-neon",
-            List.of(
-                    "gemini-4-neon",
-                    "gemini-4-carbon",
-                    "gemini-4-argon",
-                    "gemini-4-hydrogen",
-                    "gemini-3.8-flash"
-            ),
             "GEMINI_API_KEY",
             "https://aistudio.google.com/apikey",
             "https://console.cloud.google.com/apis/credentials",
             "gemini",
-            "-p \"\" -o text",
-            "-p \"Reply OK\"",
+            "-p \"\" --output-format text",
+            "-p \"Reply OK\" --output-format text",
             "",
             "npm install -g @google/gemini-cli",
             "https://accounts.google.com/o/oauth2/v2/auth",
             "https://oauth2.googleapis.com/token",
-            "https://www.googleapis.com/auth/generative-language",
+            "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/generative-language.retriever",
             "#2563EB",
             "#60A5FA"
     );
@@ -86,8 +64,6 @@ public enum ModelProviderType {
     private final String shortName;
     private final String fullName;
     private final String defaultBaseUrl;
-    private final String defaultModel;
-    private final List<String> modelPresets;
     private final String envVarName;
     private final String apiKeyConsoleUrl;
     private final String oauthConsoleUrl;
@@ -106,8 +82,6 @@ public enum ModelProviderType {
             String shortName,
             String fullName,
             String defaultBaseUrl,
-            String defaultModel,
-            List<String> modelPresets,
             String envVarName,
             String apiKeyConsoleUrl,
             String oauthConsoleUrl,
@@ -125,8 +99,6 @@ public enum ModelProviderType {
         this.shortName = shortName;
         this.fullName = fullName;
         this.defaultBaseUrl = defaultBaseUrl;
-        this.defaultModel = defaultModel;
-        this.modelPresets = modelPresets;
         this.envVarName = envVarName;
         this.apiKeyConsoleUrl = apiKeyConsoleUrl;
         this.oauthConsoleUrl = oauthConsoleUrl;
@@ -154,12 +126,19 @@ public enum ModelProviderType {
         return defaultBaseUrl;
     }
 
+    /**
+     * Models are discovered dynamically from live provider APIs or CLIs rather than hardcoded.
+     * Returns empty string when no model has been fetched/selected yet.
+     */
     public String getDefaultModel() {
-        return defaultModel;
+        return "";
     }
 
+    /**
+     * Returns an empty list; available models are fetched live via {@code ModelDiscoveryService}.
+     */
     public List<String> getModelPresets() {
-        return modelPresets;
+        return List.of();
     }
 
     public String getEnvVarName() {
@@ -191,7 +170,29 @@ public enum ModelProviderType {
     }
 
     public String getCliInstallHint() {
-        return cliInstallHint;
+        return getCliInstallHint(detectOsName());
+    }
+
+    /**
+     * Returns an OS-appropriate install command for macOS, Linux, or Windows.
+     */
+    public String getCliInstallHint(String osName) {
+        String os = osName == null ? "" : osName.toLowerCase(java.util.Locale.ROOT);
+        boolean isWin = os.contains("win");
+        boolean isMac = os.contains("mac") || os.contains("darwin") || os.contains("osx");
+        return switch (this) {
+            case CLAUDE -> {
+                if (isWin) yield "irm https://claude.ai/install.ps1 | iex";
+                if (isMac) yield "brew install --cask claude-code";
+                yield "curl -fsSL https://claude.ai/install.sh | bash";
+            }
+            case CHATGPT -> "npm install -g @openai/codex";
+            case GEMINI -> "npm install -g @google/gemini-cli";
+        };
+    }
+
+    private static String detectOsName() {
+        return System.getProperty("os.name", "");
     }
 
     public String getDefaultOAuthAuthorizeUrl() {

@@ -16,8 +16,10 @@ import io.github.obelisk121.trimodel.model.ModelProviderType;
 import io.github.obelisk121.trimodel.model.ModelRequest;
 import io.github.obelisk121.trimodel.model.ModelResponse;
 import io.github.obelisk121.trimodel.provider.CliModelClient;
+import io.github.obelisk121.trimodel.provider.EnvironmentAutoDetector;
 import io.github.obelisk121.trimodel.provider.ModelClient;
 import io.github.obelisk121.trimodel.provider.ModelClientFactory;
+import io.github.obelisk121.trimodel.provider.ModelDiscoveryService;
 import io.github.obelisk121.trimodel.settings.ProviderConfig;
 import io.github.obelisk121.trimodel.settings.SecretStorageService;
 import io.github.obelisk121.trimodel.settings.TriModelConfigurable;
@@ -27,6 +29,7 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
@@ -42,10 +45,12 @@ import java.awt.datatransfer.StringSelection;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Simple one-screen setup dialog so users can authorize Claude, ChatGPT, and Gemini
- * in two clicks via Browser Sign-In (official CLI — zero Client ID required) or by pasting an API key.
+ * in two clicks via Browser Sign-In (official CLI — zero Client ID required) or by pasting an API key,
+ * and pick live available models fetched directly from each provider's API or CLI.
  */
 public final class QuickSetupDialog extends DialogWrapper {
 
@@ -59,40 +64,45 @@ public final class QuickSetupDialog extends DialogWrapper {
         super(project, true);
         this.project = project;
         setTitle("Sign In & Setup — Claude, ChatGPT, Gemini");
-        setOKButtonText("Save & Done");
+        setOKButtonText("Save && Done");
         init();
     }
 
     @Override
     protected @Nullable JComponent createCenterPanel() {
         JPanel root = new JPanel(new BorderLayout(0, 10));
-        root.setPreferredSize(new Dimension(740, 440));
+        root.setPreferredSize(new Dimension(820, 560));
 
         JPanel top = new JPanel(new BorderLayout(0, 6));
         JBLabel intro = new JBLabel(
                 "<html>Connect all three models on one screen: choose <b>Browser Sign-In</b> (uses official "
-                        + "<code>claude</code>, <code>codex</code>, <code>gemini</code> CLIs — no Client ID needed) "
-                        + "or paste an <b>API Key</b>.</html>");
+                        + "<code>claude</code>, <code>codex</code>, <code>gemini</code>/<code>agy</code> CLIs — no Client ID needed) "
+                        + "or paste an <b>API Key</b>. Available models are fetched live from each provider.</html>");
         top.add(intro, BorderLayout.CENTER);
 
         JPanel quickBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        JButton useBrowserAllBtn = new JButton("Use Browser Sign-In for All");
-        useBrowserAllBtn.addActionListener(e -> {
+        JButton autoDetectBtn = new JButton("Auto-Detect All");
+        JButton refreshAllModelsBtn = new JButton("Refresh All Models");
+        JButton advancedBtn = new JButton("Advanced Settings...");
+        JBLabel osBadgeLabel = new JBLabel(EnvironmentAutoDetector.formatOsLabel(
+                System.getProperty("os.name", ""), System.getProperty("os.arch", "")));
+        osBadgeLabel.setForeground(JBColor.GRAY);
+
+        autoDetectBtn.addActionListener(e -> runAutoDetectAll(autoDetectBtn, osBadgeLabel));
+        refreshAllModelsBtn.addActionListener(e -> {
             for (ProviderRow row : rows.values()) {
-                if (CliModelClient.isCliInstalled(row.type, row.existingConfig.effectiveCliExecutable(row.type))) {
-                    row.enabledCheck.setSelected(true);
-                    row.simpleModeCombo.setSelectedItem(MODE_BROWSER);
-                }
+                row.refreshModelsAsync(true);
             }
         });
-        JButton advancedBtn = new JButton("Advanced Settings...");
         advancedBtn.addActionListener(e -> {
             saveChoices();
             close(OK_EXIT_CODE);
             ShowSettingsUtil.getInstance().showSettingsDialog(project, TriModelConfigurable.class);
         });
-        quickBar.add(useBrowserAllBtn);
+        quickBar.add(autoDetectBtn);
+        quickBar.add(refreshAllModelsBtn);
         quickBar.add(advancedBtn);
+        quickBar.add(osBadgeLabel);
         top.add(quickBar, BorderLayout.SOUTH);
 
         JPanel cardsContainer = new JPanel();
@@ -110,7 +120,44 @@ public final class QuickSetupDialog extends DialogWrapper {
 
         root.add(top, BorderLayout.NORTH);
         root.add(cardsContainer, BorderLayout.CENTER);
+        if (!settings.isAutoDetectedOnce()) {
+            runAutoDetectAll(autoDetectBtn, osBadgeLabel);
+        }
         return root;
+    }
+
+    private void runAutoDetectAll(JButton triggerBtn, JBLabel statusLbl) {
+        triggerBtn.setEnabled(false);
+        statusLbl.setForeground(JBColor.foreground());
+        statusLbl.setText("Detecting CLIs, env keys & live models...");
+
+        Map<ModelProviderType, ProviderConfig> currentConfigs = new EnumMap<>(ModelProviderType.class);
+        Map<ModelProviderType, String> apiKeys = new EnumMap<>(ModelProviderType.class);
+        for (Map.Entry<ModelProviderType, ProviderRow> entry : rows.entrySet()) {
+            currentConfigs.put(entry.getKey(), entry.getValue().buildUpdatedConfig());
+            apiKeys.put(entry.getKey(), entry.getValue().getApiKey());
+        }
+
+        Runnable task = () -> {
+            EnvironmentAutoDetector.EnvironmentReport report = new EnvironmentAutoDetector()
+                    .detectAll(currentConfigs, apiKeys, true, () -> false);
+            SwingUtilities.invokeLater(() -> {
+                triggerBtn.setEnabled(true);
+                statusLbl.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
+                statusLbl.setText(report.summary());
+                for (Map.Entry<ModelProviderType, EnvironmentAutoDetector.ProviderDetection> e : report.providers().entrySet()) {
+                    ProviderRow row = rows.get(e.getKey());
+                    if (row != null) {
+                        row.applyAutoDetection(e.getValue());
+                    }
+                }
+            });
+        };
+        if (ApplicationManager.getApplication() != null) {
+            ApplicationManager.getApplication().executeOnPooledThread(task);
+        } else {
+            new Thread(task, "TriModel-QuickAutoDetect").start();
+        }
     }
 
     @Override
@@ -133,8 +180,9 @@ public final class QuickSetupDialog extends DialogWrapper {
 
     private static final class ProviderRow {
         final ModelProviderType type;
-        final ProviderConfig existingConfig;
+        ProviderConfig existingConfig;
         final JBCheckBox enabledCheck;
+        boolean suppressingModeEvents = false;
         final ComboBox<String> simpleModeCombo = new ComboBox<>(new String[]{MODE_BROWSER, MODE_API_KEY});
         final CardLayout cardLayout = new CardLayout();
         final JPanel modeCards = new JPanel(cardLayout);
@@ -149,6 +197,12 @@ public final class QuickSetupDialog extends DialogWrapper {
         final JBPasswordField apiKeyField = new JBPasswordField();
         final JButton getKeyBtn = new JButton("Get Key ↗");
 
+        // Live API/CLI Model selection row
+        final ComboBox<String> modelCombo = new ComboBox<>();
+        final JButton refreshModelsBtn = new JButton("Refresh");
+        final JBLabel modelSourceLabel = new JBLabel(" ");
+        final AtomicInteger modelFetchGen = new AtomicInteger(0);
+
         // Shared feedback
         final JButton testBtn = new JButton("Test");
         final JBLabel feedbackLabel = new JBLabel(" ");
@@ -161,6 +215,17 @@ public final class QuickSetupDialog extends DialogWrapper {
             this.enabledCheck.setFont(enabledCheck.getFont().deriveFont(Font.BOLD, 13f));
             this.enabledCheck.setForeground(new JBColor(
                     Color.decode(type.getLightAccentHex()), Color.decode(type.getDarkAccentHex())));
+
+            // Prevent "Browser Sign-In" from clipping in the combo box
+            this.simpleModeCombo.setPrototypeDisplayValue("Browser Sign-In   ");
+            this.modelCombo.setEditable(true);
+            this.modelCombo.setPrototypeDisplayValue("gemini-3.5-flash-preview-0000");
+
+            String initialModel = cfg.effectiveModelId(type);
+            if (!initialModel.isBlank()) {
+                this.modelCombo.addItem(initialModel);
+                this.modelCombo.setSelectedItem(initialModel);
+            }
 
             // Browser Sign-In card
             JPanel browserCard = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
@@ -179,6 +244,24 @@ public final class QuickSetupDialog extends DialogWrapper {
             modeCards.add(browserCard, MODE_BROWSER);
             modeCards.add(apiCard, MODE_API_KEY);
 
+            // Live model selection bar
+            JPanel modelRow = new JPanel(new BorderLayout(6, 0));
+            modelRow.setBorder(JBUI.Borders.emptyTop(2));
+            JPanel modelLeft = new JPanel(new BorderLayout(6, 0));
+            modelLeft.add(new JBLabel("Model:"), BorderLayout.WEST);
+            modelLeft.add(modelCombo, BorderLayout.CENTER);
+            JPanel modelRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+            modelSourceLabel.setForeground(JBColor.GRAY);
+            modelSourceLabel.setFont(modelSourceLabel.getFont().deriveFont(11f));
+            modelRight.add(refreshModelsBtn);
+            modelRight.add(modelSourceLabel);
+            modelRow.add(modelLeft, BorderLayout.CENTER);
+            modelRow.add(modelRight, BorderLayout.EAST);
+
+            JPanel centerBody = new JPanel(new BorderLayout(0, 4));
+            centerBody.add(modeCards, BorderLayout.NORTH);
+            centerBody.add(modelRow, BorderLayout.SOUTH);
+
             // Top row inside card
             JPanel topRow = new JPanel(new BorderLayout(8, 0));
             topRow.add(enabledCheck, BorderLayout.WEST);
@@ -196,7 +279,7 @@ public final class QuickSetupDialog extends DialogWrapper {
                     JBUI.Borders.empty(8, 10)
             ));
             panel.add(topRow, BorderLayout.NORTH);
-            panel.add(modeCards, BorderLayout.CENTER);
+            panel.add(centerBody, BorderLayout.CENTER);
             panel.add(feedbackLabel, BorderLayout.SOUTH);
 
             // Smart initial selection:
@@ -211,16 +294,22 @@ public final class QuickSetupDialog extends DialogWrapper {
 
             refreshCliDetection();
             switchCard();
+            refreshModelsAsync(false);
 
-            simpleModeCombo.addActionListener(e -> switchCard());
+            simpleModeCombo.addActionListener(e -> {
+                switchCard();
+                if (!suppressingModeEvents) {
+                    refreshModelsAsync(false);
+                }
+            });
             getKeyBtn.addActionListener(e -> BrowserUtil.browse(type.getApiKeyConsoleUrl()));
             copyInstallBtn.addActionListener(e -> {
                 Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(type.getCliInstallHint()), null);
-                feedbackLabel.setForeground(JBColor.foreground());
-                feedbackLabel.setText("Copied install command: " + type.getCliInstallHint());
+                setFeedback(JBColor.foreground(), "Copied install command: " + type.getCliInstallHint());
             });
             signInBrowserBtn.addActionListener(e -> runCliLogin());
             signOutCliBtn.addActionListener(e -> runCliLogout());
+            refreshModelsBtn.addActionListener(e -> refreshModelsAsync(true));
             testBtn.addActionListener(e -> runQuickTest());
         }
 
@@ -236,8 +325,31 @@ public final class QuickSetupDialog extends DialogWrapper {
                 cliStatusLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
                 cliStatusLabel.setText("✓ " + exe + " CLI ready");
                 signInBrowserBtn.setEnabled(true);
-                signOutCliBtn.setVisible(!type.getDefaultCliLogoutArgs().isBlank());
+                signOutCliBtn.setVisible(CliModelClient.supportsCliLogout(type, exe));
                 copyInstallBtn.setVisible(false);
+
+                // Asynchronously probe actual signed-in status without blocking EDT
+                runAsync(() -> {
+                    CliModelClient.CliAuthStatus status = CliModelClient.checkCliAuthStatus(type, exe);
+                    SwingUtilities.invokeLater(() -> {
+                        if (!status.installed()) return;
+                        switch (status.state()) {
+                            case SIGNED_IN -> {
+                                cliStatusLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
+                                cliStatusLabel.setText("✓ " + status.detail());
+                            }
+                            case SIGNED_OUT -> {
+                                cliStatusLabel.setForeground(new JBColor(0xD97706, 0xF59E0B));
+                                cliStatusLabel.setText("⚠ " + status.detail());
+                            }
+                            default -> {
+                                cliStatusLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
+                                cliStatusLabel.setText("✓ " + status.detail());
+                            }
+                        }
+                        cliStatusLabel.setToolTipText(status.resolvedPath());
+                    });
+                }, "TriModel-CliStatus-" + type.name());
             } else {
                 cliStatusLabel.setForeground(new JBColor(0xD97706, 0xF59E0B));
                 cliStatusLabel.setText(exe + " CLI not installed");
@@ -247,45 +359,153 @@ public final class QuickSetupDialog extends DialogWrapper {
             }
         }
 
+        private void refreshModelsAsync(boolean forceRefresh) {
+            int gen = modelFetchGen.incrementAndGet();
+            ProviderConfig cfg = buildUpdatedConfig();
+            String key = getApiKey();
+
+            if (cfg.connectionMode == ConnectionMode.LOCAL_CLI
+                    && !CliModelClient.isCliInstalled(type, cfg.effectiveCliExecutable(type))) {
+                modelSourceLabel.setForeground(JBColor.GRAY);
+                modelSourceLabel.setText("CLI not installed");
+                return;
+            }
+            if (cfg.connectionMode == ConnectionMode.REST_API
+                    && key.isBlank() && !SecretStorageService.hasEnvironmentKey(type)) {
+                modelSourceLabel.setForeground(JBColor.GRAY);
+                modelSourceLabel.setText("Paste API key, then Refresh");
+                return;
+            }
+
+            refreshModelsBtn.setEnabled(false);
+            modelSourceLabel.setForeground(JBColor.GRAY);
+            modelSourceLabel.setText("Loading...");
+
+            runAsync(() -> {
+                ModelDiscoveryService discovery = new ModelDiscoveryService();
+                ModelDiscoveryService.DiscoveryResult result = discovery.fetchAvailableModels(
+                        type, cfg, key, forceRefresh, () -> modelFetchGen.get() != gen);
+                SwingUtilities.invokeLater(() -> {
+                    if (modelFetchGen.get() != gen) return;
+                    refreshModelsBtn.setEnabled(true);
+                    if (result.success() && !result.models().isEmpty()) {
+                        applyDiscoveredModels(result);
+                    } else {
+                        modelSourceLabel.setForeground(new JBColor(0xD97706, 0xF59E0B));
+                        String err = result.errorMessage();
+                        modelSourceLabel.setToolTipText(err);
+                        modelSourceLabel.setText(truncate(err.isBlank() ? "Unavailable" : err, 34));
+                    }
+                });
+            }, "TriModel-Discover-" + type.name());
+        }
+
+        private void applyDiscoveredModels(ModelDiscoveryService.DiscoveryResult result) {
+            String previous = getSelectedModelId();
+            DefaultComboBoxModel<String> model = new DefaultComboBoxModel<>();
+            for (ModelDiscoveryService.DiscoveredModel m : result.models()) {
+                model.addElement(m.id());
+            }
+            modelCombo.setModel(model);
+
+            if (!previous.isBlank() && result.containsModelId(previous)) {
+                modelCombo.setSelectedItem(previous);
+            } else if (!result.models().isEmpty()) {
+                // Always select an actually available model returned by the live API/CLI
+                modelCombo.setSelectedItem(result.models().get(0).id());
+            }
+
+            modelSourceLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
+            String summary = result.models().size() + " live (" + result.source() + ")";
+            modelSourceLabel.setText(truncate(summary, 36));
+            modelSourceLabel.setToolTipText(summary);
+        }
+
+        void applyAutoDetection(EnvironmentAutoDetector.ProviderDetection det) {
+            if (det == null) return;
+            ProviderConfig suggested = det.suggestedConfig();
+            this.existingConfig = suggested.copy();
+            suppressingModeEvents = true;
+            try {
+                enabledCheck.setSelected(suggested.enabled);
+                simpleModeCombo.setSelectedItem(
+                        suggested.connectionMode == ConnectionMode.LOCAL_CLI ? MODE_BROWSER : MODE_API_KEY);
+                switchCard();
+            } finally {
+                suppressingModeEvents = false;
+            }
+
+            CliModelClient.CliAuthStatus status = det.cliStatus();
+            if (status != null && status.installed()) {
+                String exe = suggested.effectiveCliExecutable(type);
+                signInBrowserBtn.setEnabled(true);
+                signOutCliBtn.setVisible(CliModelClient.supportsCliLogout(type, exe));
+                copyInstallBtn.setVisible(false);
+                cliStatusLabel.setToolTipText(status.resolvedPath());
+                if (status.state() == CliModelClient.AuthState.SIGNED_OUT) {
+                    cliStatusLabel.setForeground(new JBColor(0xD97706, 0xF59E0B));
+                    cliStatusLabel.setText("⚠ " + status.detail());
+                } else {
+                    cliStatusLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
+                    cliStatusLabel.setText("✓ " + status.detail());
+                }
+            } else {
+                refreshCliDetection();
+            }
+
+            if (det.discovery() != null && det.discovery().success() && !det.discovery().models().isEmpty()) {
+                applyDiscoveredModels(det.discovery());
+                if (suggested.modelId != null && !suggested.modelId.isBlank()) {
+                    modelCombo.setSelectedItem(suggested.modelId);
+                }
+            }
+            setFeedback(det.ready() ? new JBColor(0x0F9D78, 0x2AD1A3) : JBColor.GRAY,
+                    (det.ready() ? "✓ Auto-detected: " : "Detected: ") + det.summary());
+        }
+
         private void runCliLogin() {
             signInBrowserBtn.setEnabled(false);
-            feedbackLabel.setForeground(JBColor.foreground());
-            feedbackLabel.setText("Opening default browser for " + type.getShortName() + " sign-in...");
-            ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            setFeedback(JBColor.foreground(), "Opening default browser for " + type.getShortName() + " sign-in...");
+            runAsync(() -> {
                 String msg = CliModelClient.launchOfficialCliLogin(
                         type,
                         existingConfig.effectiveCliExecutable(type),
-                        s -> SwingUtilities.invokeLater(() -> feedbackLabel.setText(s))
+                        s -> SwingUtilities.invokeLater(() -> setFeedback(JBColor.foreground(), s))
                 );
                 SwingUtilities.invokeLater(() -> {
                     signInBrowserBtn.setEnabled(true);
-                    feedbackLabel.setForeground(msg.contains("successfully")
-                            ? new JBColor(0x0F9D78, 0x2AD1A3) : JBColor.foreground());
-                    feedbackLabel.setText(msg);
+                    boolean ok = msg.contains("successfully");
+                    setFeedback(ok ? new JBColor(0x0F9D78, 0x2AD1A3) : JBColor.foreground(), msg);
+                    refreshCliDetection();
+                    if (ok) {
+                        refreshModelsAsync(true);
+                    }
                 });
-            });
+            }, "TriModel-CliLogin-" + type.name());
         }
 
         private void runCliLogout() {
             signOutCliBtn.setEnabled(false);
-            ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            runAsync(() -> {
                 String msg = CliModelClient.launchOfficialCliLogout(type, existingConfig.effectiveCliExecutable(type));
                 SwingUtilities.invokeLater(() -> {
                     signOutCliBtn.setEnabled(true);
-                    feedbackLabel.setForeground(JBColor.foreground());
-                    feedbackLabel.setText(msg);
+                    setFeedback(JBColor.foreground(), msg);
+                    refreshCliDetection();
+                    modelCombo.setModel(new DefaultComboBoxModel<>());
+                    modelSourceLabel.setForeground(JBColor.GRAY);
+                    modelSourceLabel.setText("Signed out");
                 });
-            });
+            }, "TriModel-CliLogout-" + type.name());
         }
 
         private void runQuickTest() {
             ProviderConfig cfg = buildUpdatedConfig();
             String key = getApiKey();
             testBtn.setEnabled(false);
-            feedbackLabel.setForeground(JBColor.foreground());
-            feedbackLabel.setText("Testing " + type.getShortName() + "...");
+            setFeedback(JBColor.foreground(), "Testing " + type.getShortName() + "...");
 
-            ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            runAsync(() -> {
                 ModelClient client = ModelClientFactory.createClient(type, cfg, key);
                 ModelResponse resp = client.generate(
                         new ModelRequest("Reply with exactly: OK", "Health check. Reply OK.", List.of(), 64, 30),
@@ -294,16 +514,35 @@ public final class QuickSetupDialog extends DialogWrapper {
                 SwingUtilities.invokeLater(() -> {
                     testBtn.setEnabled(true);
                     if (resp.success()) {
-                        feedbackLabel.setForeground(new JBColor(0x0F9D78, 0x2AD1A3));
-                        feedbackLabel.setText("✓ Connected (" + resp.latencyMs() + "ms) — " + resp.modelId());
+                        setFeedback(new JBColor(0x0F9D78, 0x2AD1A3),
+                                "✓ Connected (" + resp.latencyMs() + "ms) — " + resp.modelId());
+                        refreshCliDetection();
+                        if (modelCombo.getItemCount() == 0) {
+                            refreshModelsAsync(true);
+                        }
                     } else {
-                        feedbackLabel.setForeground(JBColor.RED);
-                        String err = resp.errorMessage();
-                        if (err.length() > 110) err = err.substring(0, 110) + "...";
-                        feedbackLabel.setText("✗ " + err);
+                        setFeedback(JBColor.RED, "✗ " + resp.errorMessage());
                     }
                 });
-            });
+            }, "TriModel-Test-" + type.name());
+        }
+
+        private void setFeedback(Color color, String fullMessage) {
+            String msg = fullMessage == null ? " " : fullMessage;
+            feedbackLabel.setForeground(color);
+            feedbackLabel.setToolTipText(msg);
+            feedbackLabel.setText(truncate(msg, 115));
+        }
+
+        private static String truncate(String s, int max) {
+            if (s == null) return "";
+            String compact = s.replaceAll("\\s+", " ").trim();
+            return compact.length() > max ? compact.substring(0, max) + "..." : compact;
+        }
+
+        String getSelectedModelId() {
+            Object item = modelCombo.isEditable() ? modelCombo.getEditor().getItem() : modelCombo.getSelectedItem();
+            return item == null ? "" : item.toString().trim();
         }
 
         ProviderConfig buildUpdatedConfig() {
@@ -311,11 +550,20 @@ public final class QuickSetupDialog extends DialogWrapper {
             cfg.enabled = enabledCheck.isSelected();
             boolean useBrowser = MODE_BROWSER.equals(simpleModeCombo.getSelectedItem());
             cfg.connectionMode = useBrowser ? ConnectionMode.LOCAL_CLI : ConnectionMode.REST_API;
+            cfg.modelId = getSelectedModelId();
             return cfg;
         }
 
         String getApiKey() {
             return new String(apiKeyField.getPassword()).trim();
+        }
+
+        private static void runAsync(Runnable task, String threadName) {
+            if (ApplicationManager.getApplication() != null) {
+                ApplicationManager.getApplication().executeOnPooledThread(task);
+            } else {
+                new Thread(task, threadName).start();
+            }
         }
     }
 }

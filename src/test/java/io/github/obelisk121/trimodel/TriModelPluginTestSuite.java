@@ -25,12 +25,18 @@ import io.github.obelisk121.trimodel.orchestration.PromptTemplates;
 import io.github.obelisk121.trimodel.provider.ChatGptClient;
 import io.github.obelisk121.trimodel.provider.ClaudeClient;
 import io.github.obelisk121.trimodel.provider.CliModelClient;
+import io.github.obelisk121.trimodel.provider.EnvironmentAutoDetector;
 import io.github.obelisk121.trimodel.provider.GeminiClient;
 import io.github.obelisk121.trimodel.provider.HttpTransport;
 import io.github.obelisk121.trimodel.provider.ModelClient;
+import io.github.obelisk121.trimodel.provider.ModelDiscoveryService;
 import io.github.obelisk121.trimodel.settings.ProviderConfig;
+import io.github.obelisk121.trimodel.settings.TriModelSettings;
 import io.github.obelisk121.trimodel.ui.MarkdownHtmlRenderer;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -65,6 +71,12 @@ public final class TriModelPluginTestSuite {
         runTest("OAuth 2.0 PKCE (S256, auth URL, CSRF state, code exchange, temporary session & refresh)", TriModelPluginTestSuite::testOAuthPkceFlow);
         runTest("Bearer OAuth headers on ClaudeClient & GeminiClient", TriModelPluginTestSuite::testOAuthBearerHeaders);
         runTest("Agent Independence Skills (anti-sycophancy, topic matrix, blind peer labels, contradiction guard)", TriModelPluginTestSuite::testAgentIndependenceSkills);
+        runTest("Dynamic Model Discovery via REST APIs (Anthropic, OpenAI, Gemini + pagination/filtering)", TriModelPluginTestSuite::testRestApiModelDiscovery);
+        runTest("Dynamic Model Discovery via CLIs (gemini, agy, codex, claude) & no hardcoded presets", TriModelPluginTestSuite::testCliModelDiscoveryAndNoHardcodedModels);
+        runTest("CLI Auth, agy/gemini/codex/claude arg normalization, Codex error extraction & Gemini sign-out", TriModelPluginTestSuite::testCliAuthNormalizationAndSignOut);
+        runTest("Settings auto-migration for agy CLI args & legacy hardcoded CLI models", TriModelPluginTestSuite::testSettingsMigration);
+        runTest("Cross-platform PATH, executable & install-hint detection (Linux, Windows, macOS)", TriModelPluginTestSuite::testCrossPlatformPathAndExecutableDetection);
+        runTest("EnvironmentAutoDetector (signed-in CLI, agy fallback, env base URLs & first-run preservation)", TriModelPluginTestSuite::testEnvironmentAutoDetector);
 
         System.out.println();
         System.out.printf("Results: %d passed, %d failed%n", passed, failed);
@@ -698,6 +710,486 @@ public final class TriModelPluginTestSuite {
                 "Verification status badges rendered");
     }
 
+    private static void testRestApiModelDiscovery() {
+        ModelDiscoveryService.clearCache();
+
+        // 1. Anthropic paginated GET /v1/models
+        AtomicInteger anthropicPages = new AtomicInteger(0);
+        ModelDiscoveryService anthropicDiscovery = new ModelDiscoveryService((url, headers, timeout, cancel) -> {
+            assertEquals("sk-ant-key", headers.get("x-api-key"), "Anthropic discovery x-api-key header");
+            assertEquals("2026-10-21", headers.get("anthropic-version"), "Anthropic discovery version header");
+            int p = anthropicPages.incrementAndGet();
+            if (p == 1) {
+                assertTrue(url.equals("https://api.anthropic.com/v1/models?limit=100"), "Anthropic page 1 URL: " + url);
+                return new HttpTransport.HttpResult(200,
+                        "{\"data\":[{\"id\":\"claude-live-a\",\"display_name\":\"Claude Live A\"}],\"has_more\":true,\"last_id\":\"claude-live-a\"}",
+                        12, false, null);
+            }
+            assertTrue(url.contains("after_id=claude-live-a"), "Anthropic page 2 cursor URL: " + url);
+            return new HttpTransport.HttpResult(200,
+                    "{\"data\":[{\"id\":\"claude-live-b\",\"display_name\":\"Claude Live B\"}],\"has_more\":false,\"last_id\":\"claude-live-b\"}",
+                    10, false, null);
+        }, null);
+
+        ProviderConfig claudeCfg = ProviderConfig.defaultsFor(ModelProviderType.CLAUDE);
+        ModelDiscoveryService.DiscoveryResult cRes = anthropicDiscovery.fetchAvailableModels(
+                ModelProviderType.CLAUDE, claudeCfg, "sk-ant-key", true, () -> false);
+        assertTrue(cRes.success(), "Anthropic discovery succeeded: " + cRes.errorMessage());
+        assertEquals(2, cRes.models().size(), "Anthropic paginated models count");
+        assertEquals("claude-live-a", cRes.models().get(0).id(), "Anthropic page 1 model");
+        assertEquals("claude-live-b", cRes.models().get(1).id(), "Anthropic page 2 model");
+
+        // 2. OpenAI GET /v1/models filtering & sorting + custom gateway fallback
+        ModelDiscoveryService openAiDiscovery = new ModelDiscoveryService((url, headers, timeout, cancel) -> {
+            assertEquals("Bearer sk-oai-key", headers.get("Authorization"), "OpenAI Bearer header");
+            if (url.contains("custom-gateway")) {
+                return new HttpTransport.HttpResult(200,
+                        "{\"object\":\"list\",\"data\":[{\"id\":\"custom-embedding-chat\",\"created\":100}]}",
+                        10, false, null);
+            }
+            assertEquals("https://api.openai.com/v1/models", url, "OpenAI models endpoint");
+            String body = """
+                    {
+                      "object": "list",
+                      "data": [
+                        {"id": "gpt-older", "created": 1700000000},
+                        {"id": "text-embedding-3-large", "created": 1750000000},
+                        {"id": "whisper-1", "created": 1750000000},
+                        {"id": "gpt-newest", "created": 1780000000},
+                        {"id": "dall-e-3", "created": 1770000000}
+                      ]
+                    }
+                    """;
+            return new HttpTransport.HttpResult(200, body, 15, false, null);
+        }, null);
+
+        ProviderConfig oaiCfg = ProviderConfig.defaultsFor(ModelProviderType.CHATGPT);
+        ModelDiscoveryService.DiscoveryResult oRes = openAiDiscovery.fetchAvailableModels(
+                ModelProviderType.CHATGPT, oaiCfg, "sk-oai-key", true, () -> false);
+        assertTrue(oRes.success(), "OpenAI discovery succeeded");
+        assertEquals(List.of("gpt-newest", "gpt-older"), oRes.modelIds(), "OpenAI non-chat models filtered and sorted newest first");
+
+        oaiCfg.baseUrl = "https://custom-gateway.local/v1";
+        ModelDiscoveryService.DiscoveryResult customRes = openAiDiscovery.fetchAvailableModels(
+                ModelProviderType.CHATGPT, oaiCfg, "sk-oai-key", true, () -> false);
+        assertTrue(customRes.success() && customRes.containsModelId("custom-embedding-chat"),
+                "Custom gateway keeps all models when filter would drop everything");
+
+        // 3. Gemini GET /v1beta/models with pagination, models/ stripping, supportedGenerationMethods filtering & version sort
+        AtomicInteger geminiPages = new AtomicInteger(0);
+        ModelDiscoveryService geminiDiscovery = new ModelDiscoveryService((url, headers, timeout, cancel) -> {
+            assertEquals("gem-api-key", headers.get("x-goog-api-key"), "Gemini x-goog-api-key header");
+            int p = geminiPages.incrementAndGet();
+            if (p == 1) {
+                assertEquals("https://generativelanguage.googleapis.com/v1beta/models?pageSize=100", url, "Gemini page 1 URL");
+                String body = """
+                        {
+                          "models": [
+                            {"name": "models/gemini-2.5-pro", "displayName": "Gemini 2.5 Pro", "supportedGenerationMethods": ["generateContent"]},
+                            {"name": "models/text-embedding-004", "displayName": "Embedding", "supportedGenerationMethods": ["embedContent"]},
+                            {"name": "models/imagen-4.0", "displayName": "Imagen 4", "supportedGenerationMethods": ["generateContent"]}
+                          ],
+                          "nextPageToken": "tok2"
+                        }
+                        """;
+                return new HttpTransport.HttpResult(200, body, 15, false, null);
+            }
+            assertTrue(url.contains("pageToken=tok2"), "Gemini page 2 token URL: " + url);
+            String body = """
+                    {
+                      "models": [
+                        {"name": "models/gemini-3.8-flash", "displayName": "Gemini 3.8 Flash", "supportedGenerationMethods": ["generateContent"]}
+                      ]
+                    }
+                    """;
+            return new HttpTransport.HttpResult(200, body, 12, false, null);
+        }, null);
+
+        ProviderConfig gemCfg = ProviderConfig.defaultsFor(ModelProviderType.GEMINI);
+        ModelDiscoveryService.DiscoveryResult gRes = geminiDiscovery.fetchAvailableModels(
+                ModelProviderType.GEMINI, gemCfg, "gem-api-key", true, () -> false);
+        assertTrue(gRes.success(), "Gemini discovery succeeded: " + gRes.errorMessage());
+        assertEquals(List.of("gemini-3.8-flash", "gemini-2.5-pro"), gRes.modelIds(),
+                "Gemini models stripped, filtered to generateContent chat models, and sorted newest version first");
+    }
+
+    private static void testCliModelDiscoveryAndNoHardcodedModels() {
+        ModelDiscoveryService.clearCache();
+
+        // Verify no hardcoded static model presets remain on ModelProviderType or ProviderConfig
+        for (ModelProviderType t : ModelProviderType.values()) {
+            assertTrue(t.getModelPresets().isEmpty(), t + " must not have hardcoded modelPresets");
+            assertEquals("", t.getDefaultModel(), t + " must not have hardcoded defaultModel");
+            assertEquals("", ProviderConfig.defaultsFor(t).modelId, t + " ProviderConfig default modelId is empty");
+        }
+
+        // REST clients reject empty model ID instead of silently using a hardcoded model
+        ClaudeClient emptyClaude = new ClaudeClient("https://api.anthropic.com", "sk-key", "", "2026-10-21",
+                (u, h, b, to, c) -> new HttpTransport.HttpResult(200, "{}", 1, false, null));
+        ModelResponse emptyResp = emptyClaude.generate(ModelRequest.simple("", "hi"), () -> false);
+        assertTrue(!emptyResp.success() && emptyResp.errorMessage().contains("Refresh Models"),
+                "Empty REST model ID produces clear Refresh Models prompt");
+
+        // Gemini CLI JSON discovery
+        ModelDiscoveryService cliDiscovery = new ModelDiscoveryService(null, (exe, args, timeout, cancel) -> {
+            if ("gemini".equals(exe) && args.equals(List.of("models", "-o", "json"))) {
+                return new CliModelClient.CliCommandResult(0,
+                        "[{\"modelId\":\"auto\",\"displayName\":\"Auto\"},{\"modelId\":\"gemini-2.5-pro\",\"displayName\":\"gemini-2.5-pro\"}]",
+                        "", false, false, null);
+            }
+            if ("agy".equals(exe) && args.equals(List.of("models"))) {
+                // Covers both non-TTY single-tab output and TTY multi-space output
+                String agyOut = "claude-opus-5-5-high\tClaude Opus 5.5 (High)\n"
+                        + "gemini-4-neon-high\tGemini 4 Neon (High)\n"
+                        + "\r⠋ Fetching available models...\rgemini-3.8-flash-medium        Gemini 3.8 Flash (Medium)\n";
+                return new CliModelClient.CliCommandResult(0, agyOut, "", false, false, null);
+            }
+            if ("codex".equals(exe) && args.equals(List.of("debug", "models"))) {
+                String codexJson = "{\"models\":["
+                        + "{\"slug\":\"gpt-reserve\",\"display_name\":\"Reserve\",\"visibility\":\"hide\",\"priority\":1},"
+                        + "{\"slug\":\"gpt-6.2-astra\",\"display_name\":\"GPT-6.2-Astra\",\"visibility\":\"list\",\"priority\":2},"
+                        + "{\"slug\":\"gpt-6.2-sol\",\"display_name\":\"GPT-6.2-Sol\",\"visibility\":\"list\",\"priority\":1}"
+                        + "]}";
+                return new CliModelClient.CliCommandResult(0, codexJson, "", false, false, null);
+            }
+            if ("claude".equals(exe) && args.equals(List.of("auth", "status", "--json"))) {
+                // Pretty-printed JSON with space after colon (matches real claude auth status --json)
+                return new CliModelClient.CliCommandResult(0, "{\n  \"loggedIn\": true,\n  \"authMethod\": \"claude.ai\"\n}\n", "", false, false, null);
+            }
+            return new CliModelClient.CliCommandResult(1, "", "unsupported", false, false, null);
+        });
+
+        ProviderConfig gemCliCfg = ProviderConfig.defaultsFor(ModelProviderType.GEMINI);
+        gemCliCfg.connectionMode = ConnectionMode.LOCAL_CLI;
+        gemCliCfg.cliExecutable = "gemini";
+        ModelDiscoveryService.DiscoveryResult gemCliRes = cliDiscovery.fetchAvailableModels(
+                ModelProviderType.GEMINI, gemCliCfg, "", true, () -> false);
+        assertTrue(gemCliRes.success(), "gemini CLI discovery succeeded");
+        assertEquals(List.of("auto", "gemini-2.5-pro"), gemCliRes.modelIds(), "gemini CLI live models");
+
+        gemCliCfg.cliExecutable = "agy";
+        ModelDiscoveryService.DiscoveryResult agyRes = cliDiscovery.fetchAvailableModels(
+                ModelProviderType.GEMINI, gemCliCfg, "", true, () -> false);
+        assertTrue(agyRes.success(), "agy CLI discovery succeeded");
+        assertEquals("gemini-4-neon-high", agyRes.models().get(0).id(), "agy prioritizes Gemini models for Gemini provider");
+        assertTrue(agyRes.containsModelId("claude-opus-5-5-high"), "agy retains all live available models");
+
+        ProviderConfig codexCfg = ProviderConfig.defaultsFor(ModelProviderType.CHATGPT);
+        codexCfg.connectionMode = ConnectionMode.LOCAL_CLI;
+        codexCfg.cliExecutable = "codex";
+        ModelDiscoveryService.DiscoveryResult codexRes = cliDiscovery.fetchAvailableModels(
+                ModelProviderType.CHATGPT, codexCfg, "", true, () -> false);
+        assertTrue(codexRes.success(), "codex debug models succeeded");
+        assertEquals(List.of("gpt-6.2-sol", "gpt-6.2-astra"), codexRes.modelIds(),
+                "codex filters hidden models and sorts by priority");
+
+        ProviderConfig claudeCliCfg = ProviderConfig.defaultsFor(ModelProviderType.CLAUDE);
+        claudeCliCfg.connectionMode = ConnectionMode.LOCAL_CLI;
+        claudeCliCfg.cliExecutable = "claude";
+        ModelDiscoveryService.DiscoveryResult claudeCliRes = cliDiscovery.fetchAvailableModels(
+                ModelProviderType.CLAUDE, claudeCliCfg, "", true, () -> false);
+        assertTrue(claudeCliRes.success() && claudeCliRes.containsModelId("auto"),
+                "claude CLI uses account auto default when no API key is set");
+    }
+
+    private static void testCliAuthNormalizationAndSignOut() throws Exception {
+        // 1. agy must NEVER receive -o or empty -p ""; must receive --output-format text --model <m> -p {prompt}
+        List<String> agyNormalized = CliModelClient.normalizeArgsForExecution(
+                ModelProviderType.GEMINI, "agy", List.of("-p", "", "-o", "text"), "gemini-4-neon-high");
+        assertTrue(!agyNormalized.contains("-o"), "agy args never contain -o");
+        assertTrue(agyNormalized.contains("--output-format") && agyNormalized.contains("text"), "agy uses --output-format text");
+        assertTrue(agyNormalized.contains("--model") && agyNormalized.contains("gemini-4-neon-high"), "agy passes selected --model");
+        assertTrue(agyNormalized.contains("{prompt}"), "agy injects prompt via -p {prompt}");
+
+        // 2. gemini replaces -o with --output-format and injects -m only for concrete models
+        List<String> gemAuto = CliModelClient.normalizeArgsForExecution(
+                ModelProviderType.GEMINI, "gemini", List.of("-p", "", "-o", "text"), "auto");
+        assertTrue(!gemAuto.contains("-m") && gemAuto.contains("--output-format"), "gemini auto omits -m and normalizes -o");
+        List<String> gemPinned = CliModelClient.normalizeArgsForExecution(
+                ModelProviderType.GEMINI, "gemini", List.of("-p", "", "-o", "text"), "gemini-2.5-pro");
+        assertTrue(gemPinned.contains("-m") && gemPinned.contains("gemini-2.5-pro"), "gemini passes concrete -m model");
+
+        // 3. codex injects -m right after exec + --skip-git-repo-check + --ephemeral + --color never
+        List<String> codexPinned = CliModelClient.normalizeArgsForExecution(
+                ModelProviderType.CHATGPT, "codex", List.of("exec", "-"), "gpt-6.2-sol");
+        assertEquals("exec", codexPinned.get(0), "codex starts with exec");
+        assertTrue(codexPinned.contains("-m") && codexPinned.contains("gpt-6.2-sol"), "codex passes -m model");
+        assertTrue(codexPinned.contains("--skip-git-repo-check") && codexPinned.contains("--ephemeral"), "codex safety flags");
+        assertEquals("-", codexPinned.get(codexPinned.size() - 1), "codex stdin sentinel stays last");
+
+        // 4. claude appends --model for concrete model and omits for auto
+        List<String> claudePinned = CliModelClient.normalizeArgsForExecution(
+                ModelProviderType.CLAUDE, "claude", List.of("-p", "--output-format", "text"), "claude-sonnet-5-5");
+        assertTrue(claudePinned.contains("--model") && claudePinned.contains("claude-sonnet-5-5"), "claude passes --model");
+
+        // 5. Codex banner stripping surfaces the actual error instead of truncating the startup header
+        String codexStderr = """
+                OpenAI Codex v0.164.0
+                --------
+                workdir: /home/otari
+                model: gpt-6.2-astra
+                provider: openai
+                sandbox: read-only
+                ERROR: The model 'gpt-6.2-astra' is not available on your current plan.
+                """;
+        String extracted = CliModelClient.extractCliErrorDetail(ModelProviderType.CHATGPT, "codex", codexStderr, "");
+        assertTrue(extracted.contains("not available on your current plan"), "Codex real error extracted: " + extracted);
+        assertTrue(!extracted.contains("workdir:"), "Codex startup banner stripped: " + extracted);
+
+        // 6. Never open duplicate browser tabs for claude/codex/gemini native browser logins,
+        //    and never open Claude's manual paste-code fallback URL (/oauth/code/callback)
+        assertTrue(!CliModelClient.shouldAutoOpenPrintedUrl(
+                "codex",
+                "Starting local login server on http://localhost:1455.\nIf your browser did not open, navigate to:\nhttps://auth.openai.com/oauth/authorize?client_id=x",
+                "https://auth.openai.com/oauth/authorize?client_id=x"),
+                "Codex must NOT open a second duplicate browser tab when codex login launches browser natively");
+        assertTrue(CliModelClient.shouldAutoOpenPrintedUrl(
+                "codex",
+                "Failed to open browser automatically.\nhttps://auth.openai.com/oauth/authorize?client_id=x",
+                "https://auth.openai.com/oauth/authorize?client_id=x"),
+                "Codex falls back to BrowserUtil only when native browser launch fails");
+        assertTrue(!CliModelClient.shouldAutoOpenPrintedUrl(
+                "claude",
+                "Opening browser to sign in...\nIf the browser didn't open, visit: https://claude.com/cai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback",
+                "https://claude.com/cai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback"),
+                "Claude must NOT open manual copy-paste code fallback URL");
+        assertTrue(!CliModelClient.shouldAutoOpenPrintedUrl(
+                "claude",
+                "Failed to open browser\nhttps://claude.com/cai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback",
+                "https://claude.com/cai/oauth/authorize?redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback"),
+                "Claude manual /oauth/code/callback URL is never auto-opened");
+        assertTrue(!CliModelClient.shouldAutoOpenPrintedUrl(
+                "gemini",
+                "Attempting to open authentication page in your browser.\nhttps://accounts.google.com/o/oauth2/v2/auth?client_id=x",
+                "https://accounts.google.com/o/oauth2/v2/auth?client_id=x"),
+                "Gemini must NOT open a duplicate tab when gemini CLI opens browser natively");
+        assertTrue(CliModelClient.shouldAutoOpenPrintedUrl(
+                "gemini",
+                "Failed to open browser with error: ENOENT\nhttps://accounts.google.com/o/oauth2/v2/auth?client_id=x",
+                "https://accounts.google.com/o/oauth2/v2/auth?client_id=x"),
+                "Gemini falls back to BrowserUtil if native open fails");
+
+        // 7. Gemini CLI sign-out support and credential file cleanup
+        assertTrue(CliModelClient.supportsCliLogout(ModelProviderType.GEMINI, "gemini"), "gemini CLI supports Sign Out");
+        assertTrue(!CliModelClient.supportsCliLogout(ModelProviderType.GEMINI, "agy"), "agy CLI hides unsupported direct Sign Out");
+        assertTrue(CliModelClient.supportsCliLogout(ModelProviderType.CLAUDE, "claude"), "claude CLI supports Sign Out");
+        assertTrue(CliModelClient.supportsCliLogout(ModelProviderType.CHATGPT, "codex"), "codex CLI supports Sign Out");
+
+        Path tmpGemDir = Files.createTempDirectory("trimodel-gemini-test-");
+        try {
+            Files.writeString(tmpGemDir.resolve("oauth_creds.json"), "{\"access_token\":\"tok123\"}", StandardCharsets.UTF_8);
+            Files.writeString(tmpGemDir.resolve("google_accounts.json"), "{\"active\":\"dev@example.com\",\"old\":[]}", StandardCharsets.UTF_8);
+            boolean cleared = CliModelClient.clearGeminiOAuthCredentials(tmpGemDir);
+            assertTrue(cleared, "clearGeminiOAuthCredentials reports credentials removed");
+            assertTrue(!Files.exists(tmpGemDir.resolve("oauth_creds.json")), "oauth_creds.json deleted");
+            String accAfter = Files.readString(tmpGemDir.resolve("google_accounts.json"), StandardCharsets.UTF_8);
+            assertTrue(accAfter.contains("\"active\": null"), "google_accounts.json active user cleared: " + accAfter);
+        } finally {
+            Files.deleteIfExists(tmpGemDir.resolve("oauth_creds.json"));
+            Files.deleteIfExists(tmpGemDir.resolve("google_accounts.json"));
+            Files.deleteIfExists(tmpGemDir);
+        }
+    }
+
+    private static void testSettingsMigration() {
+        TriModelSettings settings = new TriModelSettings();
+        TriModelSettings.State legacy = new TriModelSettings.State();
+        legacy.schemaVersion = 0;
+        legacy.gemini.connectionMode = ConnectionMode.LOCAL_CLI;
+        legacy.gemini.cliExecutable = "agy";
+        legacy.gemini.cliArgs = "-p \"\" -o text";
+        legacy.gemini.modelId = "gemini-4-neon";
+        legacy.gemini.oauthScopes = "https://www.googleapis.com/auth/generative-language";
+        legacy.chatgpt.connectionMode = ConnectionMode.LOCAL_CLI;
+        legacy.chatgpt.cliArgs = "exec -";
+        legacy.chatgpt.modelId = "gpt-6.2-sol";
+
+        settings.loadState(legacy);
+        ProviderConfig migratedGem = settings.getProviderConfig(ModelProviderType.GEMINI);
+        ProviderConfig migratedGpt = settings.getProviderConfig(ModelProviderType.CHATGPT);
+
+        assertTrue(!migratedGem.cliArgs.contains("-o "), "Migrated agy args remove -o: " + migratedGem.cliArgs);
+        assertTrue(migratedGem.cliArgs.contains("{prompt}"), "Migrated agy args include {prompt}: " + migratedGem.cliArgs);
+        assertEquals("", migratedGem.modelId, "Legacy hardcoded CLI model cleared for Gemini");
+        assertEquals("", migratedGpt.modelId, "Legacy hardcoded CLI model cleared for ChatGPT");
+        assertTrue(migratedGpt.cliArgs.contains("--skip-git-repo-check"), "Legacy Codex args migrated");
+        assertTrue(migratedGem.oauthScopes.contains("cloud-platform"), "Legacy Gemini OAuth scope migrated");
+    }
+
+    private static void testCrossPlatformPathAndExecutableDetection() throws Exception {
+        // 1. Windows candidate directories & .exe/.cmd precedence over POSIX shims
+        Map<String, String> winEnv = new java.util.LinkedHashMap<>();
+        winEnv.put("Path", "C:\\Windows\\System32");
+        winEnv.put("APPDATA", "C:\\Users\\dev\\AppData\\Roaming");
+        winEnv.put("LOCALAPPDATA", "C:\\Users\\dev\\AppData\\Local");
+        winEnv.put("ProgramFiles", "C:\\Program Files");
+        winEnv.put("ProgramData", "C:\\ProgramData");
+        winEnv.put("NVM_SYMLINK", "C:\\Program Files\\nodejs");
+        winEnv.put("PATHEXT", ".COM;.EXE;.BAT;.CMD");
+
+        List<String> winDirs = CliModelClient.candidateBinDirectories("Windows 11", "C:\\Users\\dev", winEnv);
+        assertTrue(winDirs.contains("C:\\Users\\dev\\AppData\\Roaming\\npm"), "Windows includes %APPDATA%\\npm");
+        assertTrue(winDirs.contains("C:\\Users\\dev\\AppData\\Local\\Microsoft\\WinGet\\Links"), "Windows includes WinGet Links");
+        assertTrue(winDirs.contains("C:\\Users\\dev\\scoop\\shims"), "Windows includes Scoop shims");
+        assertTrue(winDirs.contains("C:\\ProgramData\\chocolatey\\bin"), "Windows includes Chocolatey bin");
+        assertTrue(winDirs.contains("C:\\Users\\dev\\AppData\\Local\\Programs\\claude-code"), "Windows includes claude-code dir");
+        assertTrue(winDirs.contains("C:\\Users\\dev\\AppData\\Local\\Antigravity\\bin"), "Windows includes Antigravity bin");
+
+        // Verify Windows skips extensionless npm POSIX shims and prefers .exe > .cmd > .bat
+        Path winTmp = Files.createTempDirectory("trimodel-win-bin-");
+        try {
+            Files.writeString(winTmp.resolve("gemini"), "#!/bin/sh\n", StandardCharsets.UTF_8);
+            Files.writeString(winTmp.resolve("gemini.cmd"), "@echo off\n", StandardCharsets.UTF_8);
+            Files.writeString(winTmp.resolve("claude.cmd"), "@echo off\n", StandardCharsets.UTF_8);
+            Files.writeString(winTmp.resolve("claude.exe"), "MZ", StandardCharsets.UTF_8);
+
+            String resolvedGem = CliModelClient.resolveExecutable("gemini", "Windows 11", List.of(winTmp.toString()), winEnv);
+            assertTrue(resolvedGem != null && resolvedGem.endsWith("gemini.cmd"),
+                    "Windows resolves gemini.cmd instead of POSIX shim: " + resolvedGem);
+            String resolvedClaude = CliModelClient.resolveExecutable("claude", "Windows 11", List.of(winTmp.toString()), winEnv);
+            assertTrue(resolvedClaude != null && resolvedClaude.endsWith("claude.exe"),
+                    "Windows prefers native claude.exe over claude.cmd: " + resolvedClaude);
+        } finally {
+            Files.deleteIfExists(winTmp.resolve("gemini"));
+            Files.deleteIfExists(winTmp.resolve("gemini.cmd"));
+            Files.deleteIfExists(winTmp.resolve("claude.cmd"));
+            Files.deleteIfExists(winTmp.resolve("claude.exe"));
+            Files.deleteIfExists(winTmp);
+        }
+
+        // 2. Linux candidate directories & newest-first nvm sorting
+        Path linuxHome = Files.createTempDirectory("trimodel-linux-home-");
+        try {
+            Files.createDirectories(linuxHome.resolve(".nvm/versions/node/v18.19.0/bin"));
+            Files.createDirectories(linuxHome.resolve(".nvm/versions/node/v22.12.0/bin"));
+            Files.writeString(linuxHome.resolve(".npmrc"), "prefix=~/.custom-npm\n", StandardCharsets.UTF_8);
+
+            Map<String, String> linuxEnv = Map.of("PATH", "/usr/bin", "XDG_BIN_HOME", linuxHome + "/xdg-bin");
+            List<String> linuxDirs = CliModelClient.candidateBinDirectories("Linux", linuxHome.toString(), linuxEnv);
+            assertTrue(linuxDirs.contains("/home/linuxbrew/.linuxbrew/bin"), "Linux includes Linuxbrew");
+            assertTrue(linuxDirs.contains("/snap/bin"), "Linux includes Snap");
+            assertTrue(linuxDirs.contains(linuxHome + "/.local/share/pnpm"), "Linux includes pnpm");
+            assertTrue(linuxDirs.contains(linuxHome + "/.custom-npm/bin"), "Linux parses ~/.npmrc prefix");
+            assertTrue(linuxDirs.contains(linuxHome + "/xdg-bin"), "Linux includes XDG_BIN_HOME");
+            int idx22 = linuxDirs.indexOf(linuxHome.resolve(".nvm/versions/node/v22.12.0/bin").toAbsolutePath().toString());
+            int idx18 = linuxDirs.indexOf(linuxHome.resolve(".nvm/versions/node/v18.19.0/bin").toAbsolutePath().toString());
+            assertTrue(idx22 >= 0 && idx18 >= 0 && idx22 < idx18, "nvm sorts v22 before v18");
+        } finally {
+            Files.deleteIfExists(linuxHome.resolve(".npmrc"));
+            Files.deleteIfExists(linuxHome.resolve(".nvm/versions/node/v18.19.0/bin"));
+            Files.deleteIfExists(linuxHome.resolve(".nvm/versions/node/v18.19.0"));
+            Files.deleteIfExists(linuxHome.resolve(".nvm/versions/node/v22.12.0/bin"));
+            Files.deleteIfExists(linuxHome.resolve(".nvm/versions/node/v22.12.0"));
+            Files.deleteIfExists(linuxHome.resolve(".nvm/versions/node"));
+            Files.deleteIfExists(linuxHome.resolve(".nvm/versions"));
+            Files.deleteIfExists(linuxHome.resolve(".nvm"));
+            Files.deleteIfExists(linuxHome);
+        }
+
+        // 3. macOS candidate directories & OS-specific install hints
+        List<String> macDirs = CliModelClient.candidateBinDirectories("Mac OS X", "/Users/dev", Map.of("PATH", "/usr/bin"));
+        assertTrue(macDirs.contains("/opt/homebrew/bin"), "macOS includes Homebrew");
+        assertTrue(macDirs.contains("/Users/dev/Library/pnpm"), "macOS includes Library/pnpm");
+        assertTrue(macDirs.contains("/Applications/Antigravity.app/Contents/Resources/app/bin"), "macOS includes Antigravity app bin");
+
+        assertTrue(ModelProviderType.CLAUDE.getCliInstallHint("Windows 11").contains("install.ps1"), "Windows Claude PowerShell install hint");
+        assertTrue(ModelProviderType.CLAUDE.getCliInstallHint("Linux").contains("install.sh"), "Linux Claude shell install hint");
+        assertTrue(ModelProviderType.CLAUDE.getCliInstallHint("Mac OS X").contains("brew"), "macOS Claude Homebrew install hint");
+    }
+
+    private static void testEnvironmentAutoDetector() {
+        EnvironmentAutoDetector.Probe fakeProbe = new EnvironmentAutoDetector.Probe() {
+            @Override
+            public String osName() {
+                return "Linux";
+            }
+
+            @Override
+            public String osArch() {
+                return "amd64";
+            }
+
+            @Override
+            public Map<String, String> env() {
+                return Map.of(
+                        "OPENAI_API_KEY", "sk-env-openai",
+                        "OPENAI_BASE_URL", "https://gateway.corp.local/v1"
+                );
+            }
+
+            @Override
+            public String storedApiKey(ModelProviderType type) {
+                return "";
+            }
+
+            @Override
+            public boolean hasOAuthSession(ModelProviderType type) {
+                return false;
+            }
+
+            @Override
+            public CliModelClient.CliAuthStatus checkCli(ModelProviderType type, String executable) {
+                if (type == ModelProviderType.CLAUDE && "claude".equals(executable)) {
+                    return new CliModelClient.CliAuthStatus(true, "/usr/local/bin/claude",
+                            CliModelClient.AuthState.SIGNED_IN, "claude CLI signed in (dev@corp)");
+                }
+                if (type == ModelProviderType.GEMINI && "gemini".equals(executable)) {
+                    return new CliModelClient.CliAuthStatus(true, "/usr/local/bin/gemini",
+                            CliModelClient.AuthState.SIGNED_OUT, "gemini CLI installed — sign in required");
+                }
+                if (type == ModelProviderType.GEMINI && "agy".equals(executable)) {
+                    return new CliModelClient.CliAuthStatus(true, "/home/dev/.local/bin/agy",
+                            CliModelClient.AuthState.UNKNOWN, "agy CLI ready");
+                }
+                return new CliModelClient.CliAuthStatus(false, "", CliModelClient.AuthState.NOT_INSTALLED, "not installed");
+            }
+
+            @Override
+            public ModelDiscoveryService.DiscoveryResult discoverModels(
+                    ModelProviderType type,
+                    ProviderConfig config,
+                    String apiKeyOverride,
+                    BooleanSupplier isCancelled
+            ) {
+                if (type == ModelProviderType.CLAUDE) {
+                    return ModelDiscoveryService.DiscoveryResult.ok(
+                            List.of(ModelDiscoveryService.DiscoveredModel.auto("Auto (Claude CLI default)")), "claude CLI");
+                }
+                if (type == ModelProviderType.CHATGPT) {
+                    return ModelDiscoveryService.DiscoveryResult.ok(
+                            List.of(new ModelDiscoveryService.DiscoveredModel("gpt-live-gateway", "GPT Live")), "OpenAI API");
+                }
+                if (type == ModelProviderType.GEMINI && "agy".equals(config.cliExecutable)) {
+                    return ModelDiscoveryService.DiscoveryResult.ok(
+                            List.of(new ModelDiscoveryService.DiscoveredModel("gemini-4-neon-high", "Gemini 4 Neon (High)")), "agy CLI");
+                }
+                return ModelDiscoveryService.DiscoveryResult.error("not signed in");
+            }
+        };
+
+        EnvironmentAutoDetector detector = new EnvironmentAutoDetector(fakeProbe);
+        TriModelSettings settings = new TriModelSettings();
+        EnvironmentAutoDetector.EnvironmentReport report = detector.applyFirstRunAutoDetect(settings, () -> false);
+
+        assertEquals("Linux (amd64)", report.osLabel(), "Formatted OS label");
+        assertTrue(settings.isAutoDetectedOnce(), "Marked autoDetectedOnce");
+
+        ProviderConfig claude = settings.getProviderConfig(ModelProviderType.CLAUDE);
+        assertEquals(ConnectionMode.LOCAL_CLI, claude.connectionMode, "Claude auto-selected signed-in CLI");
+        assertEquals("auto", claude.modelId, "Claude selected CLI auto model");
+
+        ProviderConfig gpt = settings.getProviderConfig(ModelProviderType.CHATGPT);
+        assertEquals(ConnectionMode.REST_API, gpt.connectionMode, "ChatGPT auto-selected REST API from env key");
+        assertEquals("https://gateway.corp.local/v1", gpt.baseUrl, "ChatGPT picked up OPENAI_BASE_URL from env");
+        assertEquals("gpt-live-gateway", gpt.modelId, "ChatGPT picked up live discovered model");
+
+        ProviderConfig gem = settings.getProviderConfig(ModelProviderType.GEMINI);
+        assertEquals(ConnectionMode.LOCAL_CLI, gem.connectionMode, "Gemini auto-selected CLI mode");
+        assertEquals("agy", gem.cliExecutable, "Gemini auto-fell back to working signed-in agy when gemini CLI was signed out");
+        assertEquals(EnvironmentAutoDetector.AGY_DEFAULT_ARGS, gem.cliArgs, "Gemini auto-configured agy-safe args");
+        assertEquals("gemini-4-neon-high", gem.modelId, "Gemini picked live agy Gemini model");
+    }
+
     private static ModelClient stub(ModelProviderType type, java.util.function.Function<ModelRequest, String> fn) {
         return new ModelClient() {
             @Override
@@ -707,7 +1199,7 @@ public final class TriModelPluginTestSuite {
 
             @Override
             public String getModelId() {
-                return type.getDefaultModel();
+                return "stub-" + type.name().toLowerCase();
             }
 
             @Override

@@ -79,6 +79,10 @@ public final class ChatGptClient implements ModelClient {
                     : "OpenAI API key is not configured. Add it in Settings -> Tools -> Tri-Model AI Orchestrator or set OPENAI_API_KEY.";
             return ModelResponse.error(ModelProviderType.CHATGPT, modelId, msg, 0);
         }
+        if (modelId.isBlank() || ModelDiscoveryService.AUTO_MODEL_ID.equalsIgnoreCase(modelId)) {
+            return ModelResponse.error(ModelProviderType.CHATGPT, "",
+                    "No ChatGPT model selected. Open Sign In or Settings and click Refresh Models to load available models from the OpenAI API.", 0);
+        }
 
         Map<String, String> headers = new LinkedHashMap<>();
         headers.put("Authorization", "Bearer " + apiKey);

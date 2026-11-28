@@ -28,6 +28,7 @@ import io.github.obelisk121.trimodel.ide.IdeContextService;
 import io.github.obelisk121.trimodel.ide.TriModelProjectService;
 import io.github.obelisk121.trimodel.model.AgentSkill;
 import io.github.obelisk121.trimodel.model.AgentSkillConfig;
+import io.github.obelisk121.trimodel.model.ConnectionMode;
 import io.github.obelisk121.trimodel.model.ContextAttachment;
 import io.github.obelisk121.trimodel.model.ModelProviderType;
 import io.github.obelisk121.trimodel.model.OrchestrationListener;
@@ -37,6 +38,7 @@ import io.github.obelisk121.trimodel.model.ProposedFileChange;
 import io.github.obelisk121.trimodel.model.RoleAssignment;
 import io.github.obelisk121.trimodel.model.StageResult;
 import io.github.obelisk121.trimodel.orchestration.OrchestrationEngine;
+import io.github.obelisk121.trimodel.provider.EnvironmentAutoDetector;
 import io.github.obelisk121.trimodel.provider.ModelClient;
 import io.github.obelisk121.trimodel.provider.ModelClientFactory;
 import io.github.obelisk121.trimodel.settings.ProviderConfig;
@@ -156,8 +158,30 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
         TriModelSettings.getInstance().addChangeListener(this.settingsChangedListener);
         OAuthSessionStore.addChangeListener(this.oauthSessionListener);
         refreshProviderBadges();
-        SecretStorageService.warmCacheAsync(() -> SwingUtilities.invokeLater(this::refreshProviderBadges));
+        SecretStorageService.warmCacheAsync(() -> SwingUtilities.invokeLater(() -> {
+            refreshProviderBadges();
+            runFirstLaunchAutoDetectIfNeeded();
+        }));
         renderWelcomeView();
+    }
+
+    private void runFirstLaunchAutoDetectIfNeeded() {
+        TriModelSettings settings = TriModelSettings.getInstance();
+        if (settings.isAutoDetectedOnce()) {
+            return;
+        }
+        statusLabel.setText("Auto-detecting CLIs, credentials, and available models...");
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            EnvironmentAutoDetector.EnvironmentReport report =
+                    new EnvironmentAutoDetector().applyFirstRunAutoDetect(settings, cancelFlag::get);
+            SwingUtilities.invokeLater(() -> {
+                loadSettingsIntoControls();
+                refreshProviderBadges();
+                if (!isRunning) {
+                    statusLabel.setText(report.summary());
+                }
+            });
+        });
     }
 
     @Override
@@ -901,7 +925,11 @@ public final class TriModelToolWindowPanel extends JPanel implements Disposable 
             boolean ready = ModelClientFactory.isReady(type, cfg);
             String label = ModelClientFactory.readinessLabel(type, cfg);
             pill.setText((ready ? "● " : "○ ") + type.getShortName());
-            pill.setToolTipText(type.getFullName() + ": " + label + " (" + cfg.effectiveModelId(type) + ")");
+            String modelNote = cfg.effectiveModelId(type);
+            if (modelNote.isBlank()) {
+                modelNote = cfg.connectionMode == ConnectionMode.LOCAL_CLI ? "CLI auto" : "API auto";
+            }
+            pill.setToolTipText(type.getFullName() + ": " + label + " (" + modelNote + ")");
             if (ready) {
                 pill.setForeground(Color.WHITE);
                 pill.setBackground(new JBColor(Color.decode(type.getLightAccentHex()), Color.decode(type.getDarkAccentHex())));

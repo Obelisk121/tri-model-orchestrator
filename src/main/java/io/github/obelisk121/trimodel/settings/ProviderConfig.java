@@ -38,7 +38,7 @@ public class ProviderConfig {
         ProviderConfig cfg = new ProviderConfig();
         cfg.enabled = true;
         cfg.connectionMode = ConnectionMode.REST_API;
-        cfg.modelId = type.getDefaultModel();
+        cfg.modelId = "";
         cfg.baseUrl = type.getDefaultBaseUrl();
         cfg.openAiApiStyle = OpenAiApiStyle.RESPONSES;
         cfg.geminiApiStyle = GeminiApiStyle.INTERACTIONS;
@@ -75,7 +75,7 @@ public class ProviderConfig {
     }
 
     public String effectiveModelId(ModelProviderType type) {
-        return (modelId == null || modelId.isBlank()) ? type.getDefaultModel() : modelId.trim();
+        return (modelId == null || modelId.isBlank()) ? "" : modelId.trim();
     }
 
     public String effectiveBaseUrl(ModelProviderType type) {

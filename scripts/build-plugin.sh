@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PYCHARM_APP="${PYCHARM_APP:-/Applications/PyCharm.app}"
 PLUGIN_NAME="tri-model-orchestrator"
-PLUGIN_VERSION="1.3.0"
+PLUGIN_VERSION="1.4.0"
 
 if [[ ! -d "$PYCHARM_APP/Contents/lib" ]]; then
   echo "ERROR: PyCharm installation not found at $PYCHARM_APP" >&2

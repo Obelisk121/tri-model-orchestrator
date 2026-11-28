@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ProxySelector;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
@@ -45,6 +46,7 @@ public final class OAuthPkceService {
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(20))
             .followRedirects(HttpClient.Redirect.NORMAL)
+            .proxy(ProxySelector.getDefault())
             .build();
 
     @FunctionalInterface

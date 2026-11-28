@@ -5,12 +5,15 @@ import io.github.obelisk121.trimodel.auth.OAuthSessionStore;
 import io.github.obelisk121.trimodel.auth.OAuthToken;
 import io.github.obelisk121.trimodel.model.ConnectionMode;
 import io.github.obelisk121.trimodel.model.ModelProviderType;
+import io.github.obelisk121.trimodel.model.ModelRequest;
+import io.github.obelisk121.trimodel.model.ModelResponse;
 import io.github.obelisk121.trimodel.settings.ProviderConfig;
 import io.github.obelisk121.trimodel.settings.SecretStorageService;
 import io.github.obelisk121.trimodel.settings.TriModelSettings;
 
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
 
 /**
  * Resolves configured ModelClient instances for Claude, ChatGPT, and Gemini
@@ -28,7 +31,8 @@ public final class ModelClientFactory {
                     type,
                     effective.effectiveCliExecutable(type),
                     effective.effectiveCliArgs(type),
-                    "cli:" + effective.effectiveCliExecutable(type)
+                    effective.effectiveModelId(type),
+                    ""
             );
         }
 
@@ -49,11 +53,25 @@ public final class ModelClientFactory {
             String credential,
             boolean useBearerAuth
     ) {
+        String configuredModel = effective.effectiveModelId(type);
+        if (configuredModel.isBlank() || ModelDiscoveryService.AUTO_MODEL_ID.equalsIgnoreCase(configuredModel)) {
+            return new AutoResolvingRestClient(type, effective.copy(), credential, useBearerAuth);
+        }
+        return instantiateRestClient(type, effective, configuredModel, credential, useBearerAuth);
+    }
+
+    private static ModelClient instantiateRestClient(
+            ModelProviderType type,
+            ProviderConfig effective,
+            String modelId,
+            String credential,
+            boolean useBearerAuth
+    ) {
         return switch (type) {
             case CLAUDE -> new ClaudeClient(
                     effective.effectiveBaseUrl(type),
                     credential,
-                    effective.effectiveModelId(type),
+                    modelId,
                     effective.effectiveAnthropicVersion(),
                     useBearerAuth,
                     HttpTransport::postJson
@@ -61,7 +79,7 @@ public final class ModelClientFactory {
             case CHATGPT -> new ChatGptClient(
                     effective.effectiveBaseUrl(type),
                     credential,
-                    effective.effectiveModelId(type),
+                    modelId,
                     effective.openAiApiStyle,
                     useBearerAuth,
                     HttpTransport::postJson
@@ -69,12 +87,62 @@ public final class ModelClientFactory {
             case GEMINI -> new GeminiClient(
                     effective.effectiveBaseUrl(type),
                     credential,
-                    effective.effectiveModelId(type),
+                    modelId,
                     effective.geminiApiStyle,
                     useBearerAuth,
                     HttpTransport::postJson
             );
         };
+    }
+
+    /**
+     * Lazily resolves an available model ID from the provider's live /models API on the worker thread
+     * when no model has been explicitly picked yet, avoiding both hardcoded model names and EDT network I/O.
+     */
+    private static final class AutoResolvingRestClient implements ModelClient {
+        private final ModelProviderType type;
+        private final ProviderConfig config;
+        private final String credential;
+        private final boolean useBearerAuth;
+        private volatile String resolvedModelId = "";
+
+        AutoResolvingRestClient(ModelProviderType type, ProviderConfig config, String credential, boolean useBearerAuth) {
+            this.type = type;
+            this.config = config;
+            this.credential = credential == null ? "" : credential;
+            this.useBearerAuth = useBearerAuth;
+        }
+
+        @Override
+        public ModelProviderType getProviderType() {
+            return type;
+        }
+
+        @Override
+        public String getModelId() {
+            return resolvedModelId.isBlank() ? "auto (API)" : resolvedModelId;
+        }
+
+        @Override
+        public ModelResponse generate(ModelRequest request, BooleanSupplier isCancelled) {
+            if (credential.isBlank()) {
+                return instantiateRestClient(type, config, "", credential, useBearerAuth).generate(request, isCancelled);
+            }
+            String model = resolvedModelId;
+            if (model.isBlank()) {
+                ModelDiscoveryService discovery = new ModelDiscoveryService();
+                ModelDiscoveryService.DiscoveryResult res = discovery.fetchAvailableModels(
+                        type, config, useBearerAuth ? null : credential, false, isCancelled);
+                if (!res.success() || res.models().isEmpty()) {
+                    return ModelResponse.error(type, "",
+                            "Could not auto-discover an available " + type.getShortName() + " model from API: " + res.errorMessage(),
+                            0);
+                }
+                model = res.firstConcreteModelId();
+                resolvedModelId = model;
+            }
+            return instantiateRestClient(type, config, model, credential, useBearerAuth).generate(request, isCancelled);
+        }
     }
 
     private static String resolveUsableOAuthAccessToken(ModelProviderType type, ProviderConfig cfg) {
